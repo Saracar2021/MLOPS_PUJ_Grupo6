@@ -42,6 +42,7 @@ dag = DAG(
     tags=['mlops', 'training', 'forest-cover'],
 )
 
+
 def fetch_data_from_api(**kwargs):
     """
     Tarea 1: Obtener datos de la API externa
@@ -58,14 +59,15 @@ def fetch_data_from_api(**kwargs):
         )
         response.raise_for_status()
         
-        # Obtener datos en formato CSV
-        data_csv = response.text
-        print(f"Datos recibidos: {len(data_csv)} caracteres")
+        # CAMBIO: Obtener datos en formato JSON (no CSV)
+        data_json = response.json()
+        print(f"Datos recibidos: {data_json.get('group_number')}, Batch: {data_json.get('batch_number')}")
+        print(f"Número de registros: {len(data_json.get('data', []))}")
         
         # Guardar en XCom para la siguiente tarea
-        kwargs['ti'].xcom_push(key='raw_data_csv', value=data_csv)
+        kwargs['ti'].xcom_push(key='raw_data_json', value=data_json)
         
-        return f"Datos obtenidos exitosamente - {len(data_csv)} caracteres"
+        return f"Datos obtenidos exitosamente - Batch {data_json.get('batch_number')} - {len(data_json.get('data', []))} registros"
     
     except Exception as e:
         print(f"Error al obtener datos: {str(e)}")
@@ -76,15 +78,56 @@ def preprocess_data(**kwargs):
     Tarea 2: Preprocesar los datos
     """
     ti = kwargs['ti']
-    raw_data_csv = ti.xcom_pull(key='raw_data_csv', task_ids='fetch_data')
+    raw_data_json = ti.xcom_pull(key='raw_data_json', task_ids='fetch_data')
     
-    if not raw_data_csv:
+    if not raw_data_json:
         raise ValueError("No se encontraron datos para procesar")
     
-    # Leer CSV
-    df = pd.read_csv(StringIO(raw_data_csv))
+    # CAMBIO: Extraer la lista de datos del JSON
+    data_list = raw_data_json.get('data', [])
+    
+    if not data_list:
+        raise ValueError("La respuesta JSON no contiene datos")
+    
+    print(f"Procesando {len(data_list)} registros del batch {raw_data_json.get('batch_number')}")
+    
+    # CAMBIO: Definir nombres de columnas según la estructura del dataset
+    column_names = [
+        'Elevation',
+        'Aspect',
+        'Slope',
+        'Horizontal_Distance_To_Hydrology',
+        'Vertical_Distance_To_Hydrology',
+        'Horizontal_Distance_To_Roadways',
+        'Hillshade_9am',
+        'Hillshade_Noon',
+        'Hillshade_3pm',
+        'Horizontal_Distance_To_Fire_Points',
+        'Wilderness_Area',
+        'Soil_Type',
+        'Cover_Type'
+    ]
+    
+    # CAMBIO: Crear DataFrame desde la lista de listas
+    df = pd.DataFrame(data_list, columns=column_names)
+    
     print(f"Dataset cargado: {df.shape}")
     print(f"Columnas: {df.columns.tolist()}")
+    print(f"Primeras filas:\n{df.head()}")
+    
+    # Convertir columnas numéricas (vienen como strings)
+    numeric_columns = [
+        'Elevation', 'Aspect', 'Slope',
+        'Horizontal_Distance_To_Hydrology',
+        'Vertical_Distance_To_Hydrology',
+        'Horizontal_Distance_To_Roadways',
+        'Hillshade_9am', 'Hillshade_Noon', 'Hillshade_3pm',
+        'Horizontal_Distance_To_Fire_Points',
+        'Cover_Type'
+    ]
+    
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     
     # Verificar valores nulos
     print(f"Valores nulos:\n{df.isnull().sum()}")
@@ -100,8 +143,9 @@ def preprocess_data(**kwargs):
     X = df_clean.drop('Cover_Type', axis=1)
     y = df_clean['Cover_Type']
     
-    # One-hot encoding para variables categóricas si las hay
-    X_encoded = pd.get_dummies(X, drop_first=True)
+    # One-hot encoding para variables categóricas (Wilderness_Area y Soil_Type)
+    categorical_columns = ['Wilderness_Area', 'Soil_Type']
+    X_encoded = pd.get_dummies(X, columns=categorical_columns, drop_first=False)
     
     print(f"Features después de encoding: {X_encoded.shape}")
     print(f"Distribución de clases:\n{y.value_counts()}")
@@ -220,6 +264,7 @@ def train_models(**kwargs):
     # Encontrar el mejor modelo
     best_model = max(results.items(), key=lambda x: x[1]['accuracy'])
     print(f"\nMejor modelo: {best_model[0]} con accuracy: {best_model[1]['accuracy']:.4f}")
+    print(f"Columnas del modelo: {X_encoded.columns.tolist()}")
     
     return f"Entrenamiento completado. Mejor modelo: {best_model[0]}"
 

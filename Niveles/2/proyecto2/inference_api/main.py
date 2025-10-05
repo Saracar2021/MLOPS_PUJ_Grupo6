@@ -40,6 +40,8 @@ class PredictionInput(BaseModel):
     Hillshade_Noon: int = Field(..., ge=0, le=255, description="Índice de sombra al mediodía")
     Hillshade_3pm: int = Field(..., ge=0, le=255, description="Índice de sombra a las 3pm")
     Horizontal_Distance_To_Fire_Points: float = Field(..., description="Distancia a puntos de fuego")
+    Wilderness_Area: str = Field(..., description="Área silvestre")
+    Soil_Type: str = Field(..., description="Tipo de suelo")
     
     class Config:
         json_schema_extra = {
@@ -53,13 +55,15 @@ class PredictionInput(BaseModel):
                 "Hillshade_9am": 221,
                 "Hillshade_Noon": 232,
                 "Hillshade_3pm": 148,
-                "Horizontal_Distance_To_Fire_Points": 6279
+                "Horizontal_Distance_To_Fire_Points": 6279,
+                "Wilderness_Area": "Rawah",
+                "Soil_Type": "C7744"
             }
         }
 
 class PredictionOutput(BaseModel):
     """Schema para salida de predicción"""
-    prediction: int = Field(..., description="Tipo de cobertura forestal predicho (1-7)")
+    prediction: int = Field(..., description="Tipo de cobertura forestal predicho (0-6)")
     prediction_label: str = Field(..., description="Etiqueta del tipo de cobertura")
     confidence: Optional[float] = Field(None, description="Confianza de la predicción")
     model_used: str = Field(..., description="Nombre del modelo utilizado")
@@ -79,13 +83,13 @@ class ModelInfo(BaseModel):
 def get_cover_type_label(prediction: int) -> str:
     """Convertir predicción numérica a etiqueta"""
     labels = {
-        1: "Spruce/Fir",
-        2: "Lodgepole Pine",
-        3: "Ponderosa Pine",
-        4: "Cottonwood/Willow",
-        5: "Aspen",
-        6: "Douglas-fir",
-        7: "Krummholz"
+        0: "Spruce/Fir",
+        1: "Lodgepole Pine",
+        2: "Ponderosa Pine",
+        3: "Cottonwood/Willow",
+        4: "Aspen",
+        5: "Douglas-fir",
+        6: "Krummholz"
     }
     return labels.get(prediction, "Unknown")
 
@@ -129,6 +133,41 @@ def load_model_from_mlflow(model_name: str, version: Optional[str] = None, stage
     except Exception as e:
         logger.error(f"Error al cargar modelo {model_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error al cargar modelo: {str(e)}")
+
+def preprocess_input_data(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Preprocesa los datos aplicando One-Hot Encoding con drop_first=True
+    """
+    wilderness_area = df['Wilderness_Area'].iloc[0]
+    soil_type = df['Soil_Type'].iloc[0]
+    
+    # Features numéricas
+    result = df.drop(['Wilderness_Area', 'Soil_Type'], axis=1).copy()
+    
+    # Wilderness_Area: Cache, Commanche, Neota, Rawah (alfabético)
+    # Con drop_first=True: elimina Cache, quedan 3
+    for area in ['Commanche', 'Neota', 'Rawah']:
+        result[f'Wilderness_Area_{area}'] = 1 if wilderness_area == area else 0
+    
+    # Soil_Type: 24 tipos con drop_first=True
+    # Necesito los 25 tipos totales para eliminar el primero alfabéticamente
+    # Estimación basada en Forest Cover dataset
+    soil_types = [
+        'C2703', 'C2704', 'C2705', 'C2706', 'C3501', 'C3502',
+        'C4201', 'C4703', 'C4704', 'C4744', 'C4758', 'C5101',
+        'C6101', 'C6102', 'C7101', 'C7102', 'C7201', 'C7202',
+        'C7700', 'C7701', 'C7702', 'C7745', 'C7756', 'C7757'
+    ]
+    
+    for soil in soil_types:
+        result[f'Soil_Type_{soil}'] = 1 if soil_type == soil else 0
+    
+    logger.info(f"Features generadas: {result.shape[1]}")
+    
+    if result.shape[1] != 37:
+        logger.warning(f"Se esperaban 37 features, se generaron {result.shape[1]}")
+    
+    return result
 
 @app.get("/")
 def root():
@@ -235,16 +274,19 @@ def predict(input_data: PredictionInput):
         input_dict = input_data.model_dump()
         df = pd.DataFrame([input_dict])
         
+        # NUEVO: Aplicar preprocesamiento (One-Hot Encoding)
+        df_processed = preprocess_input_data(df)
+        
         # Realizar predicción
         model_data = loaded_models[current_model_name]
         model = model_data['model']
         
-        prediction = int(model.predict(df)[0])
+        prediction = int(model.predict(df_processed)[0])
         
         # Obtener probabilidades si el modelo lo soporta
         confidence = None
         if hasattr(model, 'predict_proba'):
-            proba = model.predict_proba(df)[0]
+            proba = model.predict_proba(df_processed)[0]
             confidence = float(max(proba))
         
         return PredictionOutput(
@@ -274,11 +316,14 @@ def predict_batch(batch_input: BatchPredictionInput):
         input_list = [item.model_dump() for item in batch_input.data]
         df = pd.DataFrame(input_list)
         
+        # NUEVO: Aplicar preprocesamiento
+        df_processed = preprocess_input_data(df)
+        
         # Realizar predicciones
         model_data = loaded_models[current_model_name]
         model = model_data['model']
         
-        predictions = model.predict(df).tolist()
+        predictions = model.predict(df_processed).tolist()
         
         results = []
         for i, pred in enumerate(predictions):
