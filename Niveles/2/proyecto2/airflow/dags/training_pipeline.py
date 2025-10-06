@@ -5,6 +5,7 @@ import requests
 import pandas as pd
 import mlflow
 import mlflow.sklearn
+from mlflow.tracking import MlflowClient
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
@@ -13,11 +14,16 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 import os
 import json
 from io import StringIO
+from sqlalchemy import create_engine, text
+import psycopg2
 
 # Configuración de MLflow
 MLFLOW_TRACKING_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
 DATA_API_URL = os.getenv('DATA_API_URL', 'http://data_api:8080')
 GROUP_NUMBER = os.getenv('GROUP_NUMBER', '6')
+
+# Configuración de PostgreSQL para datos
+POSTGRES_DATA_URI = "postgresql://data_user:data_password@postgres_data:5432/forest_data"
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
@@ -45,7 +51,7 @@ dag = DAG(
 
 def fetch_data_from_api(**kwargs):
     """
-    Tarea 1: Obtener datos de la API externa
+    Tarea 1: Obtener datos de la API externa y guardarlos en PostgreSQL
     """
     print(f"Obteniendo datos de: {DATA_API_URL}")
     print(f"Número de grupo: {GROUP_NUMBER}")
@@ -59,39 +65,99 @@ def fetch_data_from_api(**kwargs):
         )
         response.raise_for_status()
         
-        # CAMBIO: Obtener datos en formato JSON (no CSV)
+        # Obtener datos en formato JSON
         data_json = response.json()
         print(f"Datos recibidos: {data_json.get('group_number')}, Batch: {data_json.get('batch_number')}")
         print(f"Número de registros: {len(data_json.get('data', []))}")
         
         # Guardar en XCom para la siguiente tarea
         kwargs['ti'].xcom_push(key='raw_data_json', value=data_json)
-        
+
+        # NUEVO: Guardar datos en PostgreSQL
+        try:
+            engine = create_engine(POSTGRES_DATA_URI)
+            with engine.begin() as conn:  # CAMBIO: .begin() en lugar de .connect()
+                insert_query = text("""
+                    INSERT INTO batch_data
+                    (group_number, batch_number, execution_date, data_json, row_count)
+                    VALUES (:group_num, :batch_num, :exec_date, :data, :count)
+                """)
+                conn.execute(insert_query, {
+                    'group_num': int(GROUP_NUMBER),
+                    'batch_num': data_json.get('batch_number'),
+                    'exec_date': datetime.now(),
+                    'data': json.dumps(data_json),
+                    'count': len(data_json.get('data', []))
+                })
+                # NO NECESITAS conn.commit() - .begin() hace auto-commit
+            print(f"✅ Datos guardados en PostgreSQL - Batch {data_json.get('batch_number')}")
+        except Exception as e:
+            print(f"⚠️ Error al guardar en PostgreSQL: {str(e)}")
+            # No fallar el DAG por este error
+
         return f"Datos obtenidos exitosamente - Batch {data_json.get('batch_number')} - {len(data_json.get('data', []))} registros"
     
     except Exception as e:
         print(f"Error al obtener datos: {str(e)}")
         raise
 
+def get_historical_data(**kwargs):
+    """
+    Obtener todos los datos históricos de la BD para entrenamiento acumulativo
+    """
+    try:
+        engine = create_engine(POSTGRES_DATA_URI)
+        with engine.connect() as conn:
+            query = text("""
+                SELECT data_json, batch_number, execution_date
+                FROM batch_data
+                WHERE group_number = :group_num
+                ORDER BY execution_date ASC
+            """)
+            result = conn.execute(query, {'group_num': int(GROUP_NUMBER)})
+
+            all_data = []
+            batch_info = []
+
+            for row in result:
+                # CAMBIO: PostgreSQL JSONB devuelve dict, no string
+                data_obj = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                all_data.extend(data_obj.get('data', []))
+                batch_info.append({
+                    'batch': row[1],
+                    'date': row[2].isoformat() if row[2] else None
+                })
+
+            print(f"📊 Datos históricos recuperados: {len(all_data)} registros de {len(batch_info)} batches")
+            print(f"Batches incluidos: {[b['batch'] for b in batch_info]}")
+
+            # Guardar en XCom
+            kwargs['ti'].xcom_push(key='historical_data', value=all_data)
+            kwargs['ti'].xcom_push(key='batch_info', value=batch_info)
+
+            return f"Recuperados {len(all_data)} registros históricos"
+
+    except Exception as e:
+        print(f"Error al obtener datos históricos: {str(e)}")
+        raise
+
 def preprocess_data(**kwargs):
     """
-    Tarea 2: Preprocesar los datos
+    Tarea 2: Preprocesar los datos históricos acumulados
     """
     ti = kwargs['ti']
-    raw_data_json = ti.xcom_pull(key='raw_data_json', task_ids='fetch_data')
+
+    # Usar datos históricos acumulados en lugar de solo el batch actual
+    historical_data = ti.xcom_pull(key='historical_data', task_ids='get_historical_data')
+    batch_info = ti.xcom_pull(key='batch_info', task_ids='get_historical_data')
+
+    if not historical_data:
+        raise ValueError("No se encontraron datos históricos para procesar")
+
+    print(f"🔄 Entrenamiento ACUMULATIVO con {len(historical_data)} registros")
+    print(f"📦 Batches incluidos: {[b['batch'] for b in batch_info]}")
     
-    if not raw_data_json:
-        raise ValueError("No se encontraron datos para procesar")
-    
-    # CAMBIO: Extraer la lista de datos del JSON
-    data_list = raw_data_json.get('data', [])
-    
-    if not data_list:
-        raise ValueError("La respuesta JSON no contiene datos")
-    
-    print(f"Procesando {len(data_list)} registros del batch {raw_data_json.get('batch_number')}")
-    
-    # CAMBIO: Definir nombres de columnas según la estructura del dataset
+    # Definir nombres de columnas según la estructura del dataset
     column_names = [
         'Elevation',
         'Aspect',
@@ -108,8 +174,8 @@ def preprocess_data(**kwargs):
         'Cover_Type'
     ]
     
-    # CAMBIO: Crear DataFrame desde la lista de listas
-    df = pd.DataFrame(data_list, columns=column_names)
+    # Crear DataFrame desde datos históricos acumulados
+    df = pd.DataFrame(historical_data, columns=column_names)
     
     print(f"Dataset cargado: {df.shape}")
     print(f"Columnas: {df.columns.tolist()}")
@@ -155,7 +221,12 @@ def preprocess_data(**kwargs):
     ti.xcom_push(key='y_processed', value=y.to_json())
     ti.xcom_push(key='feature_names', value=X_encoded.columns.tolist())
     
+    # Guardar metadata de entrenamiento acumulativo
+    ti.xcom_push(key='total_batches', value=len(batch_info))
+    ti.xcom_push(key='batch_numbers', value=[b['batch'] for b in batch_info])
+
     return f"Datos preprocesados: {X_encoded.shape[0]} filas, {X_encoded.shape[1]} características"
+
 
 def train_models(**kwargs):
     """
@@ -168,10 +239,16 @@ def train_models(**kwargs):
     y_json = ti.xcom_pull(key='y_processed', task_ids='preprocess_data')
     feature_names = ti.xcom_pull(key='feature_names', task_ids='preprocess_data')
     
+    # Recuperar metadata de entrenamiento acumulativo
+    total_batches = ti.xcom_pull(key='total_batches', task_ids='preprocess_data')
+    batch_numbers = ti.xcom_pull(key='batch_numbers', task_ids='preprocess_data')
+    
     X = pd.read_json(StringIO(X_json))
     y = pd.read_json(StringIO(y_json), typ='series')
     
     print(f"Iniciando entrenamiento con {X.shape[0]} muestras")
+    print(f"Total de batches acumulados: {total_batches}")
+    print(f"Batches: {batch_numbers}")
     
     # Split train/test
     X_train, X_test, y_train, y_test = train_test_split(
@@ -218,13 +295,16 @@ def train_models(**kwargs):
             precision = precision_score(y_test, y_pred, average='weighted')
             recall = recall_score(y_test, y_pred, average='weighted')
             
-            # Registrar parámetros
+            # Registrar parámetros (INCLUYE METADATA ACUMULATIVA)
             mlflow.log_params({
                 'model_type': model_name,
                 'train_samples': len(X_train),
                 'test_samples': len(X_test),
                 'n_features': X_train.shape[1],
-                'n_classes': len(y.unique())
+                'n_classes': len(y.unique()),
+                'total_batches': total_batches,  # NUEVO
+                'batch_numbers': str(batch_numbers),  # NUEVO
+                'cumulative_training': True  # NUEVO
             })
             
             # Registrar métricas
@@ -264,19 +344,22 @@ def train_models(**kwargs):
     # Encontrar el mejor modelo
     best_model = max(results.items(), key=lambda x: x[1]['accuracy'])
     print(f"\nMejor modelo: {best_model[0]} con accuracy: {best_model[1]['accuracy']:.4f}")
-    print(f"Columnas del modelo: {X_encoded.columns.tolist()}")
+    print(f"Columnas del modelo: {X.columns.tolist()}")
     
     return f"Entrenamiento completado. Mejor modelo: {best_model[0]}"
 
+
 def evaluate_and_register_best(**kwargs):
     """
-    Tarea 4: Evaluar resultados y marcar el mejor modelo para producción
+    Tarea 4: Evaluar resultados, marcar el mejor modelo y PROMOVER A PRODUCTION
     """
     ti = kwargs['ti']
     results_json = ti.xcom_pull(key='training_results', task_ids='train_models')
     results = json.loads(results_json)
     
-    print("Resultados de todos los modelos:")
+    print("="*80)
+    print("📊 RESULTADOS DE TODOS LOS MODELOS:")
+    print("="*80)
     for model_name, metrics in results.items():
         print(f"\n{model_name}:")
         for metric, value in metrics.items():
@@ -286,18 +369,65 @@ def evaluate_and_register_best(**kwargs):
     best_model_name = max(results.items(), key=lambda x: x[1]['accuracy'])[0]
     best_accuracy = results[best_model_name]['accuracy']
     
-    print(f"\nMejor modelo seleccionado: {best_model_name}")
-    print(f"Accuracy: {best_accuracy:.4f}")
+    print("\n" + "="*80)
+    print(f"🏆 MEJOR MODELO: {best_model_name}")
+    print(f"📈 Accuracy: {best_accuracy:.4f}")
+    print("="*80)
     
-    # Aquí podrías agregar lógica para promover el modelo a producción en MLflow
-    # usando mlflow.register_model() con stage='Production'
+    # NUEVO: Promover el mejor modelo a Production
+    try:
+        client = MlflowClient()
+        registered_model_name = f"forest_cover_{best_model_name}"
+        
+        # Obtener todas las versiones del modelo
+        versions = client.search_model_versions(f"name='{registered_model_name}'")
+        
+        if versions:
+            # Ordenar por número de versión (descendente) y tomar la última
+            latest_version = sorted(versions, key=lambda x: int(x.version), reverse=True)[0]
+            version_number = latest_version.version
+            
+            print(f"\n🔄 Promoviendo modelo {registered_model_name} versión {version_number} a PRODUCTION...")
+            
+            # Archivar versiones anteriores en Production
+            for v in versions:
+                if v.current_stage == "Production" and v.version != version_number:
+                    client.transition_model_version_stage(
+                        name=registered_model_name,
+                        version=v.version,
+                        stage="Archived"
+                    )
+                    print(f"📦 Versión {v.version} archivada")
+            
+            # Promover nueva versión a Production
+            client.transition_model_version_stage(
+                name=registered_model_name,
+                version=version_number,
+                stage="Production"
+            )
+            
+            print(f"✅ Modelo {registered_model_name} v{version_number} ahora en PRODUCTION")
+            
+        else:
+            print(f"⚠️ No se encontraron versiones registradas de {registered_model_name}")
+            
+    except Exception as e:
+        print(f"❌ Error al promover modelo: {str(e)}")
+        # No fallar el DAG por este error
     
-    return f"Evaluación completada. Modelo seleccionado: {best_model_name}"
+    return f"Evaluación completada. Mejor modelo: {best_model_name} (Production)"
+
 
 # Definir tareas
 task_fetch_data = PythonOperator(
     task_id='fetch_data',
     python_callable=fetch_data_from_api,
+    dag=dag,
+)
+
+task_get_historical = PythonOperator(
+    task_id='get_historical_data',
+    python_callable=get_historical_data,
     dag=dag,
 )
 
@@ -320,4 +450,4 @@ task_evaluate = PythonOperator(
 )
 
 # Definir dependencias
-task_fetch_data >> task_preprocess >> task_train >> task_evaluate
+task_fetch_data >> task_get_historical >> task_preprocess >> task_train >> task_evaluate
