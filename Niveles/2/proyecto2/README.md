@@ -9,6 +9,7 @@ Sistema completo de MLOps que implementa un pipeline de entrenamiento y predicci
 - **MLflow**: Registro de experimentos y modelos
 - **MinIO**: Almacenamiento de artefactos
 - **MySQL**: Base de datos de metadata
+- **PostgreSQL**: Base de datos de los batches
 - **FastAPI**: API de inferencia
 - **Streamlit**: Interfaz gráfica (BONO)
 
@@ -20,7 +21,7 @@ Sistema completo de MLOps que implementa un pipeline de entrenamiento y predicci
 │                                                         │
 │  ┌──────────┐  ┌─────────┐  ┌────────┐  ┌──────────┐  │
 │  │ Airflow  │→ │ MLflow  │→ │ MinIO  │  │  MySQL   │  │
-│  │   DAG    │  │Tracking │  │ S3     │  │Metadata  │  │
+│  │   DAG    │  │Tracking │  │ S3     │  │&& PostgreSQL│  │
 │  └────┬─────┘  └────┬────┘  └────────┘  └──────────┘  │
 │       │             │                                   │
 │       ↓             ↓                                   │
@@ -88,7 +89,7 @@ mkdir -p Proyecto2
 cd Proyecto2
 ```
 
-### Paso 2: Clonar la API de Datos del Profesor - NO SE NECESITA PORQUE SE VA A CORRER APUNTANDO A LA http://10.43.100.103:8080
+### Paso 2: Clonar la API de Datos del Profesor
 
 ```bash
 # Clonar la API de datos en la carpeta data_api
@@ -106,6 +107,10 @@ mkdir -p mlflow
 mkdir -p inference_api
 mkdir -p ui
 ```
+
+### Paso 4: Copiar los Archivos
+
+Copia todos los archivos proporcionados en los artifacts a sus respectivas ubicaciones según la estructura mostrada arriba.
 
 ### Paso 5: Configurar Variables de Entorno
 
@@ -128,8 +133,7 @@ MLFLOW_TRACKING_URI=http://mlflow:5000
 MLFLOW_S3_ENDPOINT_URL=http://minio:9000
 
 # API Externa (modificar según necesidad)
-#DATA_API_URL=http://data_api:8080
-DATA_API_URL=http://10.43.100.103:8080
+DATA_API_URL=http://data_api:8080
 GROUP_NUMBER=6
 
 # Airflow
@@ -185,7 +189,7 @@ Una vez que todos los servicios estén corriendo:
 5. Monitorea la ejecución en tiempo real
 
 El DAG ejecutará:
-- ✅ Obtención de datos de la API 
+- ✅ Obtención de datos de la API externa
 - ✅ Preprocesamiento de datos
 - ✅ Entrenamiento de 3 modelos (Logistic Regression, Random Forest, Gradient Boosting)
 - ✅ Registro en MLflow con métricas y artefactos
@@ -208,7 +212,7 @@ curl http://localhost:8989/models
 # Cargar un modelo específico
 curl -X POST "http://localhost:8989/models/forest_cover_random_forest/load?stage=Production"
 
-# Realizar prediccióni
+# Realizar predicción
 curl -X POST "http://localhost:8989/predict" \
   -H "Content-Type: application/json" \
   -d '{
@@ -221,21 +225,10 @@ curl -X POST "http://localhost:8989/predict" \
     "Hillshade_9am": 221,
     "Hillshade_Noon": 232,
     "Hillshade_3pm": 148,
-    "Horizontal_Distance_To_Fire_Points": 6279,
-    "Wilderness_Area": "Rawah",
-    "Soil_Type": "C7744"
+    "Horizontal_Distance_To_Fire_Points": 6279
   }'
-
 ```
 
-#### Opción B: Usando la Interfaz de Streamlit (BONO) -- PENDIENTE PORQUE AÚN EL BONO NO ME ACABA DE FUNCIONAR
-
-1. Accede a: http://localhost:8503
-2. Navega a "Predicción Individual"
-3. Ingresa los datos del área forestal
-4. Haz clic en "Realizar Predicción"
-
-## 🎯 Funcionalidades Implementadas
 
 ### ✅ Requerimientos Obligatorios
 
@@ -249,14 +242,7 @@ curl -X POST "http://localhost:8989/predict" \
 - [x] Pipeline automatizado completo
 - [x] Documentación completa
 
-### ⭐ BONO Implementado
-
-- [x] **Selección de modelo en API**: Endpoint `/models/{model_name}/load` permite cambiar entre modelos
-- [x] **Interfaz gráfica con Streamlit**: UI completa en puerto 8503
-- [x] **Predicción por lote**: Procesamiento de archivos CSV
-- [x] **Gestión visual de modelos**: Interfaz para cargar y cambiar modelos
-
-## 🛠️ Comandos Útiles
+### Comandos utiles
 
 ```bash
 # Detener todos los servicios
@@ -324,3 +310,60 @@ docker network inspect proyecto2_mlops_network
 docker-compose restart airflow-scheduler airflow-webserver mlflow
 ```
 
+## 📝 Notas Importantes
+
+1. **Primera ejecución**: La primera vez puede tardar 5-10 minutos en que todos los servicios estén listos
+
+2. **Recursos**: Asegúrate de asignar suficientes recursos a Docker (mínimo 8GB RAM)
+
+3. **API de Datos**: Si la API del profesor no está disponible, el código de la API está en `data_api/` para ejecutarla localmente
+
+4. **Persistencia**: Los datos se mantienen en volúmenes de Docker. Para limpiar completamente, usa `docker-compose down -v`
+
+5. **Desarrollo**: Para hacer cambios en el código, solo necesitas reiniciar el servicio específico:
+   ```bash
+   docker-compose restart inference_api
+   ```
+
+## 📚 Dataset
+
+El proyecto utiliza el dataset **Forest Cover Type** que predice el tipo de cobertura forestal basado en variables cartográficas.
+
+### Tipos de Cobertura (1-7):
+1. Spruce/Fir
+2. Lodgepole Pine
+3. Ponderosa Pine
+4. Cottonwood/Willow
+5. Aspen
+6. Douglas-fir
+7. Krummholz
+
+### Variables de Entrada:
+- Elevation (metros)
+- Aspect (grados azimuth)
+- Slope (grados)
+- Distancias a características geográficas
+- Índices de sombra
+
+## 👥 Equipo
+
+**Grupo 6**  
+Pontificia Universidad Javeriana  
+Materia: Operaciones de Machine Learning  
+Proyecto 2 - Nivel 2
+
+## 📄 Licencia
+
+Este proyecto es para fines académicos.
+
+## 🆘 Soporte
+
+Si encuentras problemas:
+1. Revisa la sección de Troubleshooting
+2. Verifica los logs: `docker-compose logs -f`
+3. Consulta la documentación de cada servicio
+4. Contacta al equipo de desarrollo
+
+---
+
+**¡Sistema MLOps completamente funcional! 🚀**

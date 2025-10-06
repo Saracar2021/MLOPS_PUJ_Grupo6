@@ -91,6 +91,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # PostgreSQL para almacenar datos recolectados (instancia independiente)
+  postgres_data:
+    image: postgres:13
+    container_name: mlops_postgres_data
+    environment:
+      POSTGRES_USER: data_user
+      POSTGRES_PASSWORD: data_password
+      POSTGRES_DB: forest_data
+    ports:
+      - "5433:5432"  # Puerto diferente para no conflicto
+    volumes:
+      - postgres_data_volume:/var/lib/postgresql/data
+      - ./init_data_db.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - mlops_network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "data_user", "-d", "forest_data"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # PostgreSQL para Airflow
   postgres:
     image: postgres:13
@@ -231,6 +252,8 @@ volumes:
   mysql_data:
   minio_data:
   postgres_data:
+  airflow_logs:
+  postgres_data_volume:
 
 networks:
   mlops_network:
