@@ -12,7 +12,7 @@ Expone el modelo mediante una API en FastAPI para realizar inferencias.
 Todos los servicios (bases de datos, Airflow, y API) se ejecutan en contenedores Docker bajo un mismo docker-compose.yml.
 
 ### Estructura de Archivos
-![Estructura de archivos del proyecto](Niveles/2/Taller_2/images/archivos.png)
+![Estructura de archivos del proyecto](Niveles/2/Taller_3/images/archivos.png)
 
 ## 2. Requisitos previos
 Antes de comenzar, nos aseguramos de tener instalado:
@@ -72,9 +72,9 @@ train_model: entrena un modelo de clasificación, guarda métricas y modelo entr
 Los resultados y artefactos (modelo, preprocesador, métricas) se almacenan en el volumen artifacts.
 
 ### Resultados de Airflow
-![Dag](Niveles/2/Taller_2/images/airflow.png)
+![Dag](Niveles/2/Taller_3/images/airflow.png)
 
-![Definición de las tareas](Niveles/2/Taller_2/images/airflow-2.png)
+![Definición de las tareas](Niveles/2/Taller_3/images/airflow-2.png)
 
 
 ## 7. API de inferencia con FastAPI
@@ -84,9 +84,9 @@ El servicio API se levanta con:
  curl http://localhost:8000/health
 
 ### Levantar la API
-![API](Niveles/2/Taller_2/images/prediccion-1.png) 
+![API](Niveles/2/Taller_3/images/prediccion-1.png) 
 
-![API](Niveles/2/Taller_2/images/prediccion-1.png) 
+![API](Niveles/2/Taller_3/images/prediccion-1.png) 
 
 
 Respuesta esperada (JSON):
