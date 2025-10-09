@@ -59,7 +59,9 @@ export DATA_DB_URI="mysql+pymysql://mlflow_user:mlflow_pass@localhost:3306/pengu
 python mlflow/data_ingestion.py
 
 <img width="1437" height="415" alt="MLflow 2025-10-03 a la(s) 6 52 55 p m" src="https://github.com/user-attachments/assets/8d0536f4-f9b8-4fd6-90c0-1bcc5f853258" />
+
 <img width="1262" height="752" alt="Mlflow Exitoso 2025-10-03 a la(s) 6 53 13 p m" src="https://github.com/user-attachments/assets/abd65887-851a-425e-b022-bacb1ae8de11" />
+
 <img width="1772" height="986" alt="imagen (5)" src="https://github.com/user-attachments/assets/cacf3e03-739d-41bd-ae1a-9b56aaf23692" />
 
 #### API FastAPI para Inferencia
