@@ -4,15 +4,18 @@ Este proyecto tiene como objetivo implementar una arquitectura MLOps híbrida qu
 
 ### Estructura de Archivos
 
-📁 taller4/
-├── 📁 api/
-│ ├── Dockerfile
-│ └── app.py
-├── 📁 mlflow/
-│ ├── Dockerfile
-│ ├── data_ingestion.py
-│ ├── docker-compose.yml
-│ ├── docker-compose.yml.bak
+
+```
+taller4
+├── API/                   
+│   ├── Dockerfile
+│   ├── app.py
+│   
+├── mlflow/                    # Servicio MLflow
+│   ├── Dockerfile
+│   ├── data_ingestion.py
+│   └── docker-compose.yml
+│   └── docker-compose.yml.bak
 └── README.md
 
 ### Servios
@@ -27,7 +30,9 @@ Este proyecto tiene como objetivo implementar una arquitectura MLOps híbrida qu
 
 
 Levantar los servicios que esten funcionales:
-### Imagen 1 docker compose
+
+<img width="768" height="307" alt="Servicios " src="https://github.com/user-attachments/assets/207e1776-64ff-4412-a383-9d6ef966d4ff" />
+
 
 ### Volúmenes
 
@@ -76,7 +81,10 @@ http://localhost:8888/?token=valentasecret
 * Registrar el mejor modelo en MLflow
 * Promoverlo a Producción
 
-### IMAGEN MLFLOW
+<img width="1437" height="415" alt="MLflow 2025-10-03 a la(s) 6 52 55 p m" src="https://github.com/user-attachments/assets/780e991b-c48d-4c8b-96a3-a0d1d3bd9f42" />
+
+<img width="1262" height="752" alt="Mlflow Exitoso 2025-10-03 a la(s) 6 53 13 p m" src="https://github.com/user-attachments/assets/76f6aef8-6d92-4058-9d88-be3dd84a0ec5" />
+
 
 #### Prueba de Inferencia
 
