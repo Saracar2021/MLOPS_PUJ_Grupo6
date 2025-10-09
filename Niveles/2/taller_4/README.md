@@ -18,7 +18,8 @@ taller4
 │   └── docker-compose.yml.bak
 └── README.md
 
-### Servios
+
+### Servicios
 
 | Servicio          | Imagen / Build                  | Puerto(s)      | Descripción                                                              |
 | ----------------- | ------------------------------- | -------------- | ------------------------------------------------------------------------ |
