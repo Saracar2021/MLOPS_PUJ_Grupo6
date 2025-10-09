@@ -32,8 +32,7 @@ taller4
 
 Levantar los servicios que esten funcionales:
 
-<img width="768" height="307" alt="Servicios " src="https://github.com/user-attachments/assets/207e1776-64ff-4412-a383-9d6ef966d4ff" />
-
+----------------
 
 ### Volúmenes
 
