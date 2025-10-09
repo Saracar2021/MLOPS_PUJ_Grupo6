@@ -2,6 +2,10 @@
 
 Este proyecto tiene como objetivo implementar una arquitectura MLOps híbrida que permite desplegar y gestionar un flujo completo de Machine Learning utilizando MLflow como herramienta central de tracking y versionado de modelos. La solución integra múltiples servicios mediante contenedores orquestados con Docker Compose, optimizando tanto el desarrollo local como el despliegue en entornos productivos.
 
+<img width="1437" height="415" alt="MLflow 2025-10-03 a la(s) 6 52 55 p m" src="https://github.com/user-attachments/assets/84212bef-16e1-458f-bc30-cec7a76041b1" />
+
+
+
 ### Estructura de Archivos
 
 
