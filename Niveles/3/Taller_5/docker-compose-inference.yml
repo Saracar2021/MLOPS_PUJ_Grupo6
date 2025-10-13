@@ -1,0 +1,59 @@
+# ====================================================================
+# Docker Compose - API de Inferencia Standalone
+# Taller 5 - Locust
+# ====================================================================
+
+version: '3.8'
+
+services:
+  # API de Inferencia con recursos limitados
+  inference_api:
+    image: ${DOCKERHUB_USER}/forest-inference:v1
+    container_name: inference_api_single
+    ports:
+      - "8989:8989"
+    environment:
+      - MODEL_PATH=/app/models/model.pkl
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'           # Limitar a 0.5 CPU
+          memory: 512M          # Limitar a 512 MB RAM
+        reservations:
+          cpus: '0.25'          # Reservar mínimo 0.25 CPU
+          memory: 256M          # Reservar mínimo 256 MB RAM
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - inference_network
+
+networks:
+  inference_network:
+    driver: bridge
+
+# ====================================================================
+# INSTRUCCIONES DE USO:
+# ====================================================================
+# 1. Configurar variable de entorno:
+#    export DOCKERHUB_USER=tu-usuario
+#
+# 2. Levantar el servicio:
+#    docker-compose -f docker-compose-inference.yml up -d
+#
+# 3. Ver logs:
+#    docker-compose -f docker-compose-inference.yml logs -f
+#
+# 4. Ver recursos utilizados:
+#    docker stats inference_api_single
+#
+# 5. Probar la API:
+#    curl http://localhost:8989/health
+#
+# 6. Detener el servicio:
+#    docker-compose -f docker-compose-inference.yml down
+# ====================================================================

@@ -1,0 +1,85 @@
+# ====================================================================
+# Docker Compose - API de Inferencia con Escalamiento Horizontal
+# Taller 5 - Locust
+# ====================================================================
+
+version: '3.8'
+
+services:
+  # NGINX como Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: load_balancer
+    ports:
+      - "8989:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - inference_api
+    networks:
+      - inference_network
+    restart: unless-stopped
+
+  # API de Inferencia - Múltiples Replicas
+  inference_api:
+    image: ${DOCKERHUB_USER}/forest-inference:v1
+    environment:
+      - MODEL_PATH=/app/models/model.pkl
+    deploy:
+      replicas: 3                # Número de replicas
+      resources:
+        limits:
+          cpus: '0.3'            # Menos CPU por replica
+          memory: 256M           # Menos RAM por replica
+        reservations:
+          cpus: '0.15'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - inference_network
+
+networks:
+  inference_network:
+    driver: bridge
+
+# ====================================================================
+# INSTRUCCIONES DE USO:
+# ====================================================================
+# 1. Crear archivo nginx.conf (ver artifact separado)
+#
+# 2. Configurar variable de entorno:
+#    export DOCKERHUB_USER=tu-usuario
+#
+# 3. Levantar servicios con 3 replicas:
+#    docker-compose -f docker-compose-scale.yml up -d --scale inference_api=3
+#
+# 4. Ver todas las replicas corriendo:
+#    docker-compose -f docker-compose-scale.yml ps
+#
+# 5. Ver recursos de cada replica:
+#    docker stats
+#
+# 6. Escalar dinámicamente (ejemplo: 5 replicas):
+#    docker-compose -f docker-compose-scale.yml up -d --scale inference_api=5
+#
+# 7. Probar el load balancer:
+#    curl http://localhost:8989/health
+#
+# 8. Detener todo:
+#    docker-compose -f docker-compose-scale.yml down
+# ====================================================================
+
+# NOTAS DE OPTIMIZACIÓN:
+# - Total de recursos con 3 replicas: 0.9 CPU, 768MB RAM
+# - Comparar con 1 replica: 0.5 CPU, 512MB RAM
+# - Load balancer distribuye carga entre replicas
+# - Mayor throughput con mismo consumo de recursos
