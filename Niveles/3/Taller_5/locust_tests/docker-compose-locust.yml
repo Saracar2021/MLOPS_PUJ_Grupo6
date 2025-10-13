@@ -1,0 +1,197 @@
+# ====================================================================
+# Docker Compose - Locust Load Testing
+# Taller 5 - Pruebas de Carga
+# ====================================================================
+
+version: '3.8'
+
+services:
+  # ==================== LOCUST MASTER ====================
+  locust-master:
+    image: locustio/locust:latest
+    container_name: locust_master
+    ports:
+      - "8089:8089"  # Web UI
+      - "5557:5557"  # Puerto de comunicación con workers
+    volumes:
+      - ./locustfile.py:/locust/locustfile.py:ro
+    command: >
+      -f /locust/locustfile.py
+      --master
+      --expect-workers=${LOCUST_WORKERS:-3}
+      --host=http://inference_api:8989
+    environment:
+      - LOCUST_LOCUSTFILE=/locust/locustfile.py
+      - LOCUST_MODE=master
+    networks:
+      - load_test_network
+    depends_on:
+      - inference_api
+
+  # ==================== LOCUST WORKERS ====================
+  locust-worker:
+    image: locustio/locust:latest
+    volumes:
+      - ./locustfile.py:/locust/locustfile.py:ro
+    command: >
+      -f /locust/locustfile.py
+      --worker
+      --master-host=locust-master
+      --master-port=5557
+    environment:
+      - LOCUST_LOCUSTFILE=/locust/locustfile.py
+      - LOCUST_MODE=worker
+    networks:
+      - load_test_network
+    depends_on:
+      - locust-master
+    deploy:
+      replicas: 3  # Número de workers
+
+  # ==================== API DE INFERENCIA ====================
+  inference_api:
+    image: ${DOCKERHUB_USER}/forest-inference:v2
+    container_name: inference_target
+    environment:
+      - MODEL_PATH=/app/models/model.pkl
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'   
+          memory: 512M   
+          #reservations:
+          #cpus: '0.25'
+          #memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - load_test_network
+    restart: unless-stopped
+
+networks:
+  load_test_network:
+    driver: bridge
+
+# ====================================================================
+# INSTRUCCIONES DE USO:
+# ====================================================================
+# 
+# CONFIGURACIÓN INICIAL:
+# ----------------------
+# 1. Configurar variables de entorno:
+#    export DOCKERHUB_USER=tu-usuario
+#    export LOCUST_WORKERS=3
+#
+# ESCENARIO 1: Prueba Básica
+# ---------------------------
+# 1. Levantar servicios:
+#    docker-compose -f docker-compose-locust.yml up -d
+#
+# 2. Abrir Web UI de Locust:
+#    http://localhost:8089
+#
+# 3. Configurar prueba en la UI:
+#    - Number of users: 10000
+#    - Spawn rate: 500 users/second
+#    - Host: http://inference_api:8989 (ya configurado)
+#
+# 4. Monitorear recursos mientras corre la prueba:
+#    docker stats inference_target
+#
+# 5. Ver logs:
+#    docker-compose -f docker-compose-locust.yml logs -f inference_api
+#
+# ESCENARIO 2: Modo Headless (Automatizado)
+# ------------------------------------------
+# 1. Ejecutar prueba sin UI:
+#    docker-compose -f docker-compose-locust.yml run --rm locust-master \
+#      -f /locust/locustfile.py \
+#      --headless \
+#      --users 10000 \
+#      --spawn-rate 500 \
+#      --run-time 5m \
+#      --host http://inference_api:8989
+#
+# ESCENARIO 3: Escalar Workers
+# -----------------------------
+# 1. Cambiar número de workers:
+#    docker-compose -f docker-compose-locust.yml up -d --scale locust-worker=5
+#
+# ESCENARIO 4: Cambiar Recursos de la API
+# ----------------------------------------
+# 1. Editar el archivo docker-compose-locust.yml
+# 2. Modificar los valores de cpus y memory en deploy.resources.limits
+# 3. Recrear el contenedor:
+#    docker-compose -f docker-compose-locust.yml up -d --force-recreate inference_api
+#
+# MÉTRICAS A OBSERVAR:
+# --------------------
+# - RPS (Requests Per Second): Objetivo >500
+# - Response Time P95: Objetivo <500ms
+# - Error Rate: Objetivo <1%
+# - CPU Usage: Usar 'docker stats'
+# - Memory Usage: Usar 'docker stats'
+#
+# DETENER PRUEBAS:
+# ----------------
+# docker-compose -f docker-compose-locust.yml down
+#
+# VER RESULTADOS:
+# ---------------
+# Los resultados se muestran en:
+# - Web UI: http://localhost:8089
+# - Logs: docker-compose logs locust-master
+# - Métricas API: curl http://localhost:8989/metrics
+# ====================================================================
+
+# ====================================================================
+# CONFIGURACIONES PARA EXPERIMENTOS:
+# ====================================================================
+#
+# EXPERIMENTO 1: Encontrar Recursos Mínimos
+# ------------------------------------------
+# Objetivo: Soportar 10,000 usuarios con spawn rate 500
+# 
+# Configuración inicial:
+#   cpus: '0.25'
+#   memory: 256M
+# 
+# Si falla, incrementar gradualmente:
+#   cpus: '0.5'    → '0.75'  → '1.0'
+#   memory: 512M   → 768M    → 1024M
+#
+# EXPERIMENTO 2: Escalabilidad Horizontal
+# ----------------------------------------
+# Probar:
+# - 1 replica con 1.0 CPU, 1024MB
+# - 2 replicas con 0.5 CPU, 512MB cada una
+# - 3 replicas con 0.33 CPU, 340MB cada una
+#
+# Comparar:
+# - RPS total
+# - Latencia P95
+# - Estabilidad
+#
+# EXPERIMENTO 3: Carga Máxima
+# ----------------------------
+# Incrementar usuarios progresivamente:
+# - 5,000 usuarios
+# - 10,000 usuarios
+# - 15,000 usuarios
+# - 20,000 usuarios
+# 
+# Encontrar el punto de quiebre
+#
+# EXPERIMENTO 4: Workers de Locust
+# ---------------------------------
+# Probar con diferentes números de workers:
+# - 1 worker
+# - 3 workers
+# - 5 workers
+# 
+# Observar si hay mejora en la generación de carga
+# ====================================================================
