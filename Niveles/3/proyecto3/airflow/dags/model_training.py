@@ -19,6 +19,7 @@ matplotlib.use('Agg')  # Set backend before importing pyplot
 import matplotlib.pyplot as plt
 import seaborn as sns
 import io
+import gc
 
 default_args = {
     'owner': 'mlops_grupo6',
@@ -26,8 +27,9 @@ default_args = {
     'start_date': datetime(2025, 11, 9),
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 1,
+    'retries': 0,
     'retry_delay': timedelta(minutes=5),
+    'execution_timeout': timedelta(minutes=10),
 }
 
 def get_clean_conn():
@@ -122,12 +124,16 @@ def train_logistic_regression(**context):
         buf.seek(0)
         mlflow.log_figure(fig, "confusion_matrix.png")
         plt.close()
-        
-        mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:5])
-        
+
+        mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
+
         run = mlflow.active_run()
         context['task_instance'].xcom_push(key='lr_run_id', value=run.info.run_id)
         context['task_instance'].xcom_push(key='lr_f1_score', value=f1)
+
+    # Clean up memory
+    del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
+    gc.collect()
 
 def train_random_forest(**context):
     mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI'))
@@ -168,12 +174,16 @@ def train_random_forest(**context):
         buf.seek(0)
         mlflow.log_figure(fig, "confusion_matrix.png")
         plt.close()
-        
-        mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:5])
-        
+
+        mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
+
         run = mlflow.active_run()
         context['task_instance'].xcom_push(key='rf_run_id', value=run.info.run_id)
         context['task_instance'].xcom_push(key='rf_f1_score', value=f1)
+
+    # Clean up memory
+    del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
+    gc.collect()
 
 def train_xgboost(**context):
     mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI'))
@@ -216,11 +226,15 @@ def train_xgboost(**context):
         mlflow.log_figure(fig, "confusion_matrix.png")
         plt.close()
 
-        mlflow.xgboost.log_model(model, "model", input_example=X_train_processed[:5])
+        mlflow.xgboost.log_model(model, "model", input_example=X_train_processed[:1])
 
         run = mlflow.active_run()
         context['task_instance'].xcom_push(key='xgb_run_id', value=run.info.run_id)
         context['task_instance'].xcom_push(key='xgb_f1_score', value=f1)
+
+    # Clean up memory
+    del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
+    gc.collect()
 
 with DAG(
     'model_training_pipeline',
