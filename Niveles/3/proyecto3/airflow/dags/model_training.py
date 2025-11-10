@@ -20,6 +20,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import io
 import gc
+import logging
+import traceback
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 default_args = {
     'owner': 'mlops_grupo6',
@@ -40,6 +46,30 @@ def get_clean_conn():
         user=os.getenv('POSTGRES_CLEAN_USER'),
         password=os.getenv('POSTGRES_CLEAN_PASSWORD')
     )
+
+def setup_mlflow():
+    """Setup MLflow tracking URI and experiment with proper error handling"""
+    mlflow_uri = os.getenv('MLFLOW_TRACKING_URI')
+    logger.info(f"MLflow URI: {mlflow_uri}")
+
+    if not mlflow_uri:
+        raise ValueError("MLFLOW_TRACKING_URI environment variable is not set")
+
+    mlflow.set_tracking_uri(mlflow_uri)
+
+    # Get or create experiment (handles concurrent creation)
+    experiment_name = "diabetes_readmission"
+    try:
+        experiment = mlflow.get_experiment_by_name(experiment_name)
+        if experiment is None:
+            logger.info(f"Creating new experiment: {experiment_name}")
+            mlflow.create_experiment(experiment_name)
+        else:
+            logger.info(f"Using existing experiment: {experiment_name}")
+    except Exception as e:
+        logger.warning(f"Error creating/getting experiment: {e}. Will use set_experiment as fallback")
+
+    mlflow.set_experiment(experiment_name)
 
 def load_data(split_type):
     conn = get_clean_conn()
@@ -87,154 +117,238 @@ def prepare_pipeline(X):
     return preprocessor
 
 def train_logistic_regression(**context):
-    mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI'))
-    mlflow.set_experiment("diabetes_readmission")
-    
-    X_train, y_train = load_data('train')
-    X_val, y_val = load_data('val')
-    
-    preprocessor = prepare_pipeline(X_train)
-    X_train_processed = preprocessor.fit_transform(X_train)
-    X_val_processed = preprocessor.transform(X_val)
-    
-    with mlflow.start_run(run_name="LogisticRegression"):
-        model = LogisticRegression(max_iter=1000, random_state=42, multi_class='multinomial')
-        model.fit(X_train_processed, y_train)
-        
-        y_pred = model.predict(X_val_processed)
-        
-        f1 = f1_score(y_val, y_pred, average='weighted')
-        accuracy = accuracy_score(y_val, y_pred)
-        recall_class_2 = recall_score(y_val, y_pred, labels=[2], average='macro', zero_division=0)
-        
-        mlflow.log_param("model_type", "LogisticRegression")
-        mlflow.log_param("max_iter", 1000)
-        mlflow.log_metric("f1_score_weighted", f1)
-        mlflow.log_metric("accuracy", accuracy)
-        mlflow.log_metric("recall_class_2", recall_class_2)
-        
-        cm = confusion_matrix(y_val, y_pred)
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
-        ax.set_title('Confusion Matrix - LogisticRegression')
-        ax.set_xlabel('Predicted')
-        ax.set_ylabel('Actual')
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        mlflow.log_figure(fig, "confusion_matrix.png")
-        plt.close()
+    try:
+        logger.info("Starting LogisticRegression training")
 
-        mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
+        # Setup MLflow
+        setup_mlflow()
 
-        run = mlflow.active_run()
-        context['task_instance'].xcom_push(key='lr_run_id', value=run.info.run_id)
-        context['task_instance'].xcom_push(key='lr_f1_score', value=f1)
+        logger.info("Loading training data")
+        X_train, y_train = load_data('train')
+        logger.info(f"Training data loaded: {X_train.shape[0]} samples")
 
-    # Clean up memory
-    del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
-    gc.collect()
+        logger.info("Loading validation data")
+        X_val, y_val = load_data('val')
+        logger.info(f"Validation data loaded: {X_val.shape[0]} samples")
+
+        logger.info("Preparing preprocessing pipeline")
+        preprocessor = prepare_pipeline(X_train)
+        X_train_processed = preprocessor.fit_transform(X_train)
+        X_val_processed = preprocessor.transform(X_val)
+        logger.info(f"Data preprocessed: {X_train_processed.shape[1]} features")
+
+        with mlflow.start_run(run_name="LogisticRegression"):
+            logger.info("Training LogisticRegression model")
+            model = LogisticRegression(max_iter=1000, random_state=42, multi_class='multinomial')
+            model.fit(X_train_processed, y_train)
+
+            logger.info("Making predictions")
+            y_pred = model.predict(X_val_processed)
+
+            logger.info("Calculating metrics")
+            f1 = f1_score(y_val, y_pred, average='weighted')
+            accuracy = accuracy_score(y_val, y_pred)
+            recall_class_2 = recall_score(y_val, y_pred, labels=[2], average='macro', zero_division=0)
+
+            logger.info(f"F1: {f1:.4f}, Accuracy: {accuracy:.4f}, Recall Class 2: {recall_class_2:.4f}")
+
+            mlflow.log_param("model_type", "LogisticRegression")
+            mlflow.log_param("max_iter", 1000)
+            mlflow.log_metric("f1_score_weighted", f1)
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.log_metric("recall_class_2", recall_class_2)
+
+            logger.info("Creating confusion matrix")
+            cm = confusion_matrix(y_val, y_pred)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+            ax.set_title('Confusion Matrix - LogisticRegression')
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            mlflow.log_figure(fig, "confusion_matrix.png")
+            plt.close()
+
+            logger.info("Logging model to MLflow")
+            mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
+
+            run = mlflow.active_run()
+            run_id = run.info.run_id
+            logger.info(f"MLflow run completed: {run_id}")
+
+            context['task_instance'].xcom_push(key='lr_run_id', value=run_id)
+            context['task_instance'].xcom_push(key='lr_f1_score', value=f1)
+
+        # Clean up memory
+        del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
+        gc.collect()
+
+        logger.info("LogisticRegression training completed successfully")
+        return {"status": "success", "f1_score": f1, "run_id": run_id}
+
+    except Exception as e:
+        logger.error(f"Error in train_logistic_regression: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
 
 def train_random_forest(**context):
-    mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI'))
-    mlflow.set_experiment("diabetes_readmission")
-    
-    X_train, y_train = load_data('train')
-    X_val, y_val = load_data('val')
-    
-    preprocessor = prepare_pipeline(X_train)
-    X_train_processed = preprocessor.fit_transform(X_train)
-    X_val_processed = preprocessor.transform(X_val)
-    
-    with mlflow.start_run(run_name="RandomForest"):
-        model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
-        model.fit(X_train_processed, y_train)
-        
-        y_pred = model.predict(X_val_processed)
-        
-        f1 = f1_score(y_val, y_pred, average='weighted')
-        accuracy = accuracy_score(y_val, y_pred)
-        recall_class_2 = recall_score(y_val, y_pred, labels=[2], average='macro', zero_division=0)
-        
-        mlflow.log_param("model_type", "RandomForest")
-        mlflow.log_param("n_estimators", 100)
-        mlflow.log_param("max_depth", 10)
-        mlflow.log_metric("f1_score_weighted", f1)
-        mlflow.log_metric("accuracy", accuracy)
-        mlflow.log_metric("recall_class_2", recall_class_2)
-        
-        cm = confusion_matrix(y_val, y_pred)
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Greens', ax=ax)
-        ax.set_title('Confusion Matrix - RandomForest')
-        ax.set_xlabel('Predicted')
-        ax.set_ylabel('Actual')
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        mlflow.log_figure(fig, "confusion_matrix.png")
-        plt.close()
+    try:
+        logger.info("Starting RandomForest training")
 
-        mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
+        # Setup MLflow
+        setup_mlflow()
 
-        run = mlflow.active_run()
-        context['task_instance'].xcom_push(key='rf_run_id', value=run.info.run_id)
-        context['task_instance'].xcom_push(key='rf_f1_score', value=f1)
+        logger.info("Loading training data")
+        X_train, y_train = load_data('train')
+        logger.info(f"Training data loaded: {X_train.shape[0]} samples")
 
-    # Clean up memory
-    del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
-    gc.collect()
+        logger.info("Loading validation data")
+        X_val, y_val = load_data('val')
+        logger.info(f"Validation data loaded: {X_val.shape[0]} samples")
+
+        logger.info("Preparing preprocessing pipeline")
+        preprocessor = prepare_pipeline(X_train)
+        X_train_processed = preprocessor.fit_transform(X_train)
+        X_val_processed = preprocessor.transform(X_val)
+        logger.info(f"Data preprocessed: {X_train_processed.shape[1]} features")
+
+        with mlflow.start_run(run_name="RandomForest"):
+            logger.info("Training RandomForest model")
+            model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
+            model.fit(X_train_processed, y_train)
+
+            logger.info("Making predictions")
+            y_pred = model.predict(X_val_processed)
+
+            logger.info("Calculating metrics")
+            f1 = f1_score(y_val, y_pred, average='weighted')
+            accuracy = accuracy_score(y_val, y_pred)
+            recall_class_2 = recall_score(y_val, y_pred, labels=[2], average='macro', zero_division=0)
+
+            logger.info(f"F1: {f1:.4f}, Accuracy: {accuracy:.4f}, Recall Class 2: {recall_class_2:.4f}")
+
+            mlflow.log_param("model_type", "RandomForest")
+            mlflow.log_param("n_estimators", 100)
+            mlflow.log_param("max_depth", 10)
+            mlflow.log_metric("f1_score_weighted", f1)
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.log_metric("recall_class_2", recall_class_2)
+
+            logger.info("Creating confusion matrix")
+            cm = confusion_matrix(y_val, y_pred)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Greens', ax=ax)
+            ax.set_title('Confusion Matrix - RandomForest')
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            mlflow.log_figure(fig, "confusion_matrix.png")
+            plt.close()
+
+            logger.info("Logging model to MLflow")
+            mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
+
+            run = mlflow.active_run()
+            run_id = run.info.run_id
+            logger.info(f"MLflow run completed: {run_id}")
+
+            context['task_instance'].xcom_push(key='rf_run_id', value=run_id)
+            context['task_instance'].xcom_push(key='rf_f1_score', value=f1)
+
+        # Clean up memory
+        del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
+        gc.collect()
+
+        logger.info("RandomForest training completed successfully")
+        return {"status": "success", "f1_score": f1, "run_id": run_id}
+
+    except Exception as e:
+        logger.error(f"Error in train_random_forest: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
 
 def train_xgboost(**context):
-    mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI'))
-    mlflow.set_experiment("diabetes_readmission")
-    
-    X_train, y_train = load_data('train')
-    X_val, y_val = load_data('val')
-    
-    preprocessor = prepare_pipeline(X_train)
-    X_train_processed = preprocessor.fit_transform(X_train)
-    X_val_processed = preprocessor.transform(X_val)
-    
-    with mlflow.start_run(run_name="XGBoost"):
-        model = XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1, random_state=42)
-        model.fit(X_train_processed, y_train)
-        
-        y_pred = model.predict(X_val_processed)
-        
-        f1 = f1_score(y_val, y_pred, average='weighted')
-        accuracy = accuracy_score(y_val, y_pred)
-        recall_class_2 = recall_score(y_val, y_pred, labels=[2], average='macro', zero_division=0)
-        
-        mlflow.log_param("model_type", "XGBoost")
-        mlflow.log_param("n_estimators", 100)
-        mlflow.log_param("max_depth", 6)
-        mlflow.log_param("learning_rate", 0.1)
-        mlflow.log_metric("f1_score_weighted", f1)
-        mlflow.log_metric("accuracy", accuracy)
-        mlflow.log_metric("recall_class_2", recall_class_2)
-        
-        cm = confusion_matrix(y_val, y_pred)
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Oranges', ax=ax)
-        ax.set_title('Confusion Matrix - XGBoost')
-        ax.set_xlabel('Predicted')
-        ax.set_ylabel('Actual')
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        mlflow.log_figure(fig, "confusion_matrix.png")
-        plt.close()
+    try:
+        logger.info("Starting XGBoost training")
 
-        mlflow.xgboost.log_model(model, "model", input_example=X_train_processed[:1])
+        # Setup MLflow
+        setup_mlflow()
 
-        run = mlflow.active_run()
-        context['task_instance'].xcom_push(key='xgb_run_id', value=run.info.run_id)
-        context['task_instance'].xcom_push(key='xgb_f1_score', value=f1)
+        logger.info("Loading training data")
+        X_train, y_train = load_data('train')
+        logger.info(f"Training data loaded: {X_train.shape[0]} samples")
 
-    # Clean up memory
-    del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
-    gc.collect()
+        logger.info("Loading validation data")
+        X_val, y_val = load_data('val')
+        logger.info(f"Validation data loaded: {X_val.shape[0]} samples")
+
+        logger.info("Preparing preprocessing pipeline")
+        preprocessor = prepare_pipeline(X_train)
+        X_train_processed = preprocessor.fit_transform(X_train)
+        X_val_processed = preprocessor.transform(X_val)
+        logger.info(f"Data preprocessed: {X_train_processed.shape[1]} features")
+
+        with mlflow.start_run(run_name="XGBoost"):
+            logger.info("Training XGBoost model")
+            model = XGBClassifier(n_estimators=100, max_depth=6, learning_rate=0.1, random_state=42)
+            model.fit(X_train_processed, y_train)
+
+            logger.info("Making predictions")
+            y_pred = model.predict(X_val_processed)
+
+            logger.info("Calculating metrics")
+            f1 = f1_score(y_val, y_pred, average='weighted')
+            accuracy = accuracy_score(y_val, y_pred)
+            recall_class_2 = recall_score(y_val, y_pred, labels=[2], average='macro', zero_division=0)
+
+            logger.info(f"F1: {f1:.4f}, Accuracy: {accuracy:.4f}, Recall Class 2: {recall_class_2:.4f}")
+
+            mlflow.log_param("model_type", "XGBoost")
+            mlflow.log_param("n_estimators", 100)
+            mlflow.log_param("max_depth", 6)
+            mlflow.log_param("learning_rate", 0.1)
+            mlflow.log_metric("f1_score_weighted", f1)
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.log_metric("recall_class_2", recall_class_2)
+
+            logger.info("Creating confusion matrix")
+            cm = confusion_matrix(y_val, y_pred)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Oranges', ax=ax)
+            ax.set_title('Confusion Matrix - XGBoost')
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            mlflow.log_figure(fig, "confusion_matrix.png")
+            plt.close()
+
+            logger.info("Logging model to MLflow")
+            mlflow.xgboost.log_model(model, "model", input_example=X_train_processed[:1])
+
+            run = mlflow.active_run()
+            run_id = run.info.run_id
+            logger.info(f"MLflow run completed: {run_id}")
+
+            context['task_instance'].xcom_push(key='xgb_run_id', value=run_id)
+            context['task_instance'].xcom_push(key='xgb_f1_score', value=f1)
+
+        # Clean up memory
+        del X_train, y_train, X_val, y_val, X_train_processed, X_val_processed, model, preprocessor
+        gc.collect()
+
+        logger.info("XGBoost training completed successfully")
+        return {"status": "success", "f1_score": f1, "run_id": run_id}
+
+    except Exception as e:
+        logger.error(f"Error in train_xgboost: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
 
 with DAG(
     'model_training_pipeline',
