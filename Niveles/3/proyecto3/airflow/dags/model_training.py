@@ -5,6 +5,7 @@ import psycopg2
 import pandas as pd
 import json
 import os
+import sys
 import mlflow
 import mlflow.sklearn
 import mlflow.xgboost
@@ -23,9 +24,23 @@ import gc
 import logging
 import traceback
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - force stdout with immediate flush
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger(__name__)
+
+# Ensure stdout is unbuffered
+sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
+
+# Log that DAG is being loaded
+print("=" * 80, flush=True)
+print("Loading model_training_pipeline DAG...", flush=True)
+print("=" * 80, flush=True)
 
 default_args = {
     'owner': 'mlops_grupo6',
@@ -118,6 +133,9 @@ def prepare_pipeline(X):
 
 def train_logistic_regression(**context):
     try:
+        print("=" * 80, flush=True)
+        print("TASK STARTED: LogisticRegression Training", flush=True)
+        print("=" * 80, flush=True)
         logger.info("Starting LogisticRegression training")
 
         # Setup MLflow
@@ -186,15 +204,26 @@ def train_logistic_regression(**context):
         gc.collect()
 
         logger.info("LogisticRegression training completed successfully")
+        print("=" * 80, flush=True)
+        print("TASK COMPLETED: LogisticRegression Training - SUCCESS", flush=True)
+        print(f"F1 Score: {f1:.4f}, Run ID: {run_id}", flush=True)
+        print("=" * 80, flush=True)
         return {"status": "success", "f1_score": f1, "run_id": run_id}
 
     except Exception as e:
+        print("=" * 80, flush=True)
+        print("TASK FAILED: LogisticRegression Training", flush=True)
+        print(f"Error: {str(e)}", flush=True)
+        print("=" * 80, flush=True)
         logger.error(f"Error in train_logistic_regression: {str(e)}")
         logger.error(traceback.format_exc())
         raise
 
 def train_random_forest(**context):
     try:
+        print("=" * 80, flush=True)
+        print("TASK STARTED: RandomForest Training", flush=True)
+        print("=" * 80, flush=True)
         logger.info("Starting RandomForest training")
 
         # Setup MLflow
@@ -264,15 +293,26 @@ def train_random_forest(**context):
         gc.collect()
 
         logger.info("RandomForest training completed successfully")
+        print("=" * 80, flush=True)
+        print("TASK COMPLETED: RandomForest Training - SUCCESS", flush=True)
+        print(f"F1 Score: {f1:.4f}, Run ID: {run_id}", flush=True)
+        print("=" * 80, flush=True)
         return {"status": "success", "f1_score": f1, "run_id": run_id}
 
     except Exception as e:
+        print("=" * 80, flush=True)
+        print("TASK FAILED: RandomForest Training", flush=True)
+        print(f"Error: {str(e)}", flush=True)
+        print("=" * 80, flush=True)
         logger.error(f"Error in train_random_forest: {str(e)}")
         logger.error(traceback.format_exc())
         raise
 
 def train_xgboost(**context):
     try:
+        print("=" * 80, flush=True)
+        print("TASK STARTED: XGBoost Training", flush=True)
+        print("=" * 80, flush=True)
         logger.info("Starting XGBoost training")
 
         # Setup MLflow
@@ -343,9 +383,17 @@ def train_xgboost(**context):
         gc.collect()
 
         logger.info("XGBoost training completed successfully")
+        print("=" * 80, flush=True)
+        print("TASK COMPLETED: XGBoost Training - SUCCESS", flush=True)
+        print(f"F1 Score: {f1:.4f}, Run ID: {run_id}", flush=True)
+        print("=" * 80, flush=True)
         return {"status": "success", "f1_score": f1, "run_id": run_id}
 
     except Exception as e:
+        print("=" * 80, flush=True)
+        print("TASK FAILED: XGBoost Training", flush=True)
+        print(f"Error: {str(e)}", flush=True)
+        print("=" * 80, flush=True)
         logger.error(f"Error in train_xgboost: {str(e)}")
         logger.error(traceback.format_exc())
         raise
@@ -372,5 +420,11 @@ with DAG(
         task_id='train_xgboost',
         python_callable=train_xgboost,
     )
-    
+
     [train_lr, train_rf, train_xgb]
+
+# Log that DAG was loaded successfully
+print("=" * 80, flush=True)
+print("model_training_pipeline DAG loaded successfully!", flush=True)
+print("Tasks: train_logistic_regression, train_random_forest, train_xgboost", flush=True)
+print("=" * 80, flush=True)

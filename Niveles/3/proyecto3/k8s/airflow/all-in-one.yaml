@@ -11,6 +11,18 @@ spec:
       storage: 5Gi
 ---
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-logs-pvc
+  namespace: mlops-proyecto3
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
 kind: ConfigMap
 metadata:
   name: airflow-config
@@ -22,8 +34,11 @@ data:
   AIRFLOW__CORE__LOAD_EXAMPLES: "false"
   AIRFLOW__WEBSERVER__SECRET_KEY: "your-secret-key-here"
   AIRFLOW__LOGGING__REMOTE_LOGGING: "false"
-  AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: ""
-  AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: ""
+  AIRFLOW__LOGGING__BASE_LOG_FOLDER: "/opt/airflow/logs"
+  AIRFLOW__LOGGING__DAG_PROCESSOR_MANAGER_LOG_LOCATION: "/opt/airflow/logs/dag_processor_manager/dag_processor_manager.log"
+  AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO"
+  AIRFLOW__LOGGING__FAB_LOGGING_LEVEL: "WARNING"
+  AIRFLOW__LOGGING__LOG_FILENAME_TEMPLATE: "{{ ti.dag_id }}/{{ ti.task_id }}/{{ ts }}/{{ try_number }}.log"
   AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: "30"
   AIRFLOW__CORE__PARALLELISM: "16"
   AIRFLOW__CORE__DAG_CONCURRENCY: "8"
@@ -170,6 +185,8 @@ spec:
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
+        - name: logs
+          mountPath: /opt/airflow/logs
         resources:
           requests:
             memory: "1Gi"
@@ -181,6 +198,9 @@ spec:
       - name: dags
         persistentVolumeClaim:
           claimName: airflow-dags-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: airflow-logs-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -239,6 +259,8 @@ spec:
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
+        - name: logs
+          mountPath: /opt/airflow/logs
         resources:
           requests:
             memory: "2Gi"
@@ -250,3 +272,6 @@ spec:
       - name: dags
         persistentVolumeClaim:
           claimName: airflow-dags-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: airflow-logs-pvc
