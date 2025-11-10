@@ -161,7 +161,9 @@ def train_logistic_regression(**context):
 
         with mlflow.start_run(run_name="LogisticRegression"):
             logger.info("Training LogisticRegression model")
-            model = LogisticRegression(max_iter=1000, random_state=42, multi_class='multinomial')
+            # Reduced max_iter and added solver for faster convergence
+            model = LogisticRegression(max_iter=200, random_state=42, multi_class='multinomial',
+                                      solver='saga', n_jobs=-1)
             model.fit(X_train_processed, y_train)
 
             logger.info("Making predictions")
@@ -175,7 +177,9 @@ def train_logistic_regression(**context):
             logger.info(f"F1: {f1:.4f}, Accuracy: {accuracy:.4f}, Recall Class 2: {recall_class_2:.4f}")
 
             mlflow.log_param("model_type", "LogisticRegression")
-            mlflow.log_param("max_iter", 1000)
+            mlflow.log_param("max_iter", 200)
+            mlflow.log_param("solver", "saga")
+            mlflow.log_param("n_jobs", -1)
             mlflow.log_metric("f1_score_weighted", f1)
             mlflow.log_metric("accuracy", accuracy)
             mlflow.log_metric("recall_class_2", recall_class_2)
@@ -187,11 +191,19 @@ def train_logistic_regression(**context):
             ax.set_title('Confusion Matrix - LogisticRegression')
             ax.set_xlabel('Predicted')
             ax.set_ylabel('Actual')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            mlflow.log_figure(fig, "confusion_matrix.png")
-            plt.close()
+
+            # Try to log confusion matrix, but don't fail if S3 bucket doesn't exist
+            try:
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                mlflow.log_figure(fig, "confusion_matrix.png")
+                logger.info("Confusion matrix logged successfully")
+            except Exception as cm_error:
+                logger.warning(f"Could not log confusion matrix to MLflow: {str(cm_error)}")
+                logger.warning("Continuing without confusion matrix artifact")
+            finally:
+                plt.close()
 
             logger.info("Logging model to MLflow")
             mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
@@ -276,11 +288,19 @@ def train_random_forest(**context):
             ax.set_title('Confusion Matrix - RandomForest')
             ax.set_xlabel('Predicted')
             ax.set_ylabel('Actual')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            mlflow.log_figure(fig, "confusion_matrix.png")
-            plt.close()
+
+            # Try to log confusion matrix, but don't fail if S3 bucket doesn't exist
+            try:
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                mlflow.log_figure(fig, "confusion_matrix.png")
+                logger.info("Confusion matrix logged successfully")
+            except Exception as cm_error:
+                logger.warning(f"Could not log confusion matrix to MLflow: {str(cm_error)}")
+                logger.warning("Continuing without confusion matrix artifact")
+            finally:
+                plt.close()
 
             logger.info("Logging model to MLflow")
             mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:1])
@@ -366,11 +386,19 @@ def train_xgboost(**context):
             ax.set_title('Confusion Matrix - XGBoost')
             ax.set_xlabel('Predicted')
             ax.set_ylabel('Actual')
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            mlflow.log_figure(fig, "confusion_matrix.png")
-            plt.close()
+
+            # Try to log confusion matrix, but don't fail if S3 bucket doesn't exist
+            try:
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                mlflow.log_figure(fig, "confusion_matrix.png")
+                logger.info("Confusion matrix logged successfully")
+            except Exception as cm_error:
+                logger.warning(f"Could not log confusion matrix to MLflow: {str(cm_error)}")
+                logger.warning("Continuing without confusion matrix artifact")
+            finally:
+                plt.close()
 
             logger.info("Logging model to MLflow")
             mlflow.xgboost.log_model(model, "model", input_example=X_train_processed[:1])
