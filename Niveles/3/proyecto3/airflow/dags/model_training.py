@@ -7,6 +7,7 @@ import json
 import os
 import mlflow
 import mlflow.sklearn
+import mlflow.xgboost
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
@@ -212,9 +213,9 @@ def train_xgboost(**context):
         buf.seek(0)
         mlflow.log_figure(fig, "confusion_matrix.png")
         plt.close()
-        
-        mlflow.sklearn.log_model(model, "model", input_example=X_train_processed[:5])
-        
+
+        mlflow.xgboost.log_model(model, "model", input_example=X_train_processed[:5])
+
         run = mlflow.active_run()
         context['task_instance'].xcom_push(key='xgb_run_id', value=run.info.run_id)
         context['task_instance'].xcom_push(key='xgb_f1_score', value=f1)
