@@ -24,6 +24,10 @@ data:
   AIRFLOW__LOGGING__REMOTE_LOGGING: "false"
   AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: ""
   AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: ""
+  AIRFLOW__SCHEDULER__JOB_HEARTBEAT_SEC: "30"
+  AIRFLOW__CORE__PARALLELISM: "16"
+  AIRFLOW__CORE__DAG_CONCURRENCY: "8"
+  AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "8"
   MLFLOW_TRACKING_URI: "http://mlflow:5000"
   AWS_ACCESS_KEY_ID: "minioadmin"
   AWS_SECRET_ACCESS_KEY: "minioadmin"
@@ -237,11 +241,11 @@ spec:
           mountPath: /opt/airflow/dags
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
-          limits:
             memory: "2Gi"
             cpu: "1000m"
+          limits:
+            memory: "6Gi"
+            cpu: "2000m"
       volumes:
       - name: dags
         persistentVolumeClaim:
