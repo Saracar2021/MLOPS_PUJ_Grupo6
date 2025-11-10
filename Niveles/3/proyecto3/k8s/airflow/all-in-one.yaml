@@ -119,6 +119,20 @@ spec:
         app: airflow-webserver
     spec:
       initContainers:
+      - name: copy-dags
+        image: custom-airflow:2.7.0-mlops
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Copying DAGs to PVC..."
+          cp -rv /opt/airflow/dags-source/* /opt/airflow/dags/ || true
+          echo "DAGs copied successfully"
+          ls -la /opt/airflow/dags/
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
       - name: init-airflow
         image: custom-airflow:2.7.0-mlops
         imagePullPolicy: IfNotPresent
@@ -190,6 +204,21 @@ spec:
       labels:
         app: airflow-scheduler
     spec:
+      initContainers:
+      - name: copy-dags
+        image: custom-airflow:2.7.0-mlops
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Copying DAGs to PVC..."
+          cp -rv /opt/airflow/dags-source/* /opt/airflow/dags/ || true
+          echo "DAGs copied successfully"
+          ls -la /opt/airflow/dags/
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
       containers:
       - name: airflow-scheduler
         image: custom-airflow:2.7.0-mlops

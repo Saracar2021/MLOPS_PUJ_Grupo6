@@ -15,5 +15,8 @@ COPY requirements.txt /requirements.txt
 # Install Python dependencies
 RUN pip install --no-cache-dir -r /requirements.txt
 
+# Copy DAG files to a temporary location in the image
+COPY --chown=airflow:root dags/ /opt/airflow/dags-source/
+
 # Set working directory
 WORKDIR /opt/airflow
