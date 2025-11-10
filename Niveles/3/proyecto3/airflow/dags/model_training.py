@@ -102,12 +102,16 @@ def load_data(split_type):
     
     features_list = []
     targets = []
-    
+
     for row in rows:
-        features = json.loads(row[0])
+        # PostgreSQL may return JSON as dict or string depending on configuration
+        if isinstance(row[0], dict):
+            features = row[0]
+        else:
+            features = json.loads(row[0])
         features_list.append(features)
         targets.append(row[1])
-    
+
     return pd.DataFrame(features_list), pd.Series(targets)
 
 def prepare_pipeline(X):
