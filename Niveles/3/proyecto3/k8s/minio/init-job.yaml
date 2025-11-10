@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: mlops-proyecto3
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: mc
+        image: minio/mc:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Wait for MinIO to be ready
+          until mc alias set myminio http://minio:9000 minioadmin minioadmin; do
+            echo "Waiting for MinIO to be ready..."
+            sleep 2
+          done
+
+          # Create mlflow bucket if it doesn't exist
+          if ! mc ls myminio/mlflow > /dev/null 2>&1; then
+            echo "Creating mlflow bucket..."
+            mc mb myminio/mlflow
+            echo "Bucket created successfully"
+          else
+            echo "Bucket mlflow already exists"
+          fi
+
+          echo "MinIO initialization complete"
