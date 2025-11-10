@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-raw
+  namespace: mlops-proyecto3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-raw
+  template:
+    metadata:
+      labels:
+        app: postgres-raw
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        envFrom:
+        - configMapRef:
+            name: postgres-raw-config
+        - secretRef:
+            name: postgres-raw-secret
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-raw-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-raw
+  namespace: mlops-proyecto3
+spec:
+  selector:
+    app: postgres-raw
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP

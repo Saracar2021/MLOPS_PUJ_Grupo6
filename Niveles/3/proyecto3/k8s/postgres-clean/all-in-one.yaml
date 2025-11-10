@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-clean-config
+  namespace: mlops-proyecto3
+data:
+  POSTGRES_DB: clean_db
+  POSTGRES_USER: mlops_user
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-clean-secret
+  namespace: mlops-proyecto3
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: mlops_password
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-clean-pvc
+  namespace: mlops-proyecto3
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-clean
+  namespace: mlops-proyecto3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-clean
+  template:
+    metadata:
+      labels:
+        app: postgres-clean
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        envFrom:
+        - configMapRef:
+            name: postgres-clean-config
+        - secretRef:
+            name: postgres-clean-secret
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: postgres-clean-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-clean
+  namespace: mlops-proyecto3
+spec:
+  selector:
+    app: postgres-clean
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
