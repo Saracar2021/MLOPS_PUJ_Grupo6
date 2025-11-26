@@ -1,0 +1,261 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-dags-pvc
+  namespace: mlops-proyecto-final
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-logs-pvc
+  namespace: mlops-proyecto-final
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-config
+  namespace: mlops-proyecto-final
+data:
+  AIRFLOW__CORE__EXECUTOR: "LocalExecutor"
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: "postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow"
+  AIRFLOW__CORE__FERNET_KEY: "UKMzEm3yIuFYEq1y3-2FxPNWSVwRASpahmQ9kQfEr8E="
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__WEBSERVER__SECRET_KEY: "mlops-grupo9-secret"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+  AWS_ACCESS_KEY_ID: "minioadmin"
+  AWS_SECRET_ACCESS_KEY: "minioadmin"
+  MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: "mlops_user"
+  POSTGRES_PASSWORD: "mlops_password"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-postgres-pvc
+  namespace: mlops-proyecto-final
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-postgres
+  namespace: mlops-proyecto-final
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow-postgres
+  template:
+    metadata:
+      labels:
+        app: airflow-postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        env:
+        - name: POSTGRES_USER
+          value: "airflow"
+        - name: POSTGRES_PASSWORD
+          value: "airflow"
+        - name: POSTGRES_DB
+          value: "airflow"
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: airflow-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-postgres
+  namespace: mlops-proyecto-final
+spec:
+  selector:
+    app: airflow-postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-webserver
+  namespace: mlops-proyecto-final
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow-webserver
+  template:
+    metadata:
+      labels:
+        app: airflow-webserver
+    spec:
+      initContainers:
+      - name: copy-dags
+        image: saracardenas2025/mlops-airflow:latest
+        imagePullPolicy: Always
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Copying DAGs to PVC..."
+          cp -rv /opt/airflow/dags-source/* /opt/airflow/dags/ || true
+          echo "DAGs copied successfully"
+          ls -la /opt/airflow/dags/
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+      - name: init-airflow
+        image: saracardenas2025/mlops-airflow:latest
+        imagePullPolicy: Always
+        command:
+        - /bin/bash
+        - -c
+        - |
+          airflow db init
+          airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true
+        envFrom:
+        - configMapRef:
+            name: airflow-config
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+      containers:
+      - name: airflow-webserver
+        image: saracardenas2025/mlops-airflow:latest
+        imagePullPolicy: Always
+        command:
+        - airflow
+        - webserver
+        envFrom:
+        - configMapRef:
+            name: airflow-config
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        - name: logs
+          mountPath: /opt/airflow/logs
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: airflow-dags-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: airflow-logs-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-webserver
+  namespace: mlops-proyecto-final
+spec:
+  selector:
+    app: airflow-webserver
+  ports:
+  - port: 8080
+    targetPort: 8080
+    nodePort: 30800
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-scheduler
+  namespace: mlops-proyecto-final
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow-scheduler
+  template:
+    metadata:
+      labels:
+        app: airflow-scheduler
+    spec:
+      initContainers:
+      - name: copy-dags
+        image: saracardenas2025/mlops-airflow:latest
+        imagePullPolicy: Always
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Copying DAGs to PVC..."
+          cp -rv /opt/airflow/dags-source/* /opt/airflow/dags/ || true
+          echo "DAGs copied successfully"
+          ls -la /opt/airflow/dags/
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+      containers:
+      - name: airflow-scheduler
+        image: saracardenas2025/mlops-airflow:latest
+        imagePullPolicy: Always
+        command:
+        - airflow
+        - scheduler
+        envFrom:
+        - configMapRef:
+            name: airflow-config
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        - name: logs
+          mountPath: /opt/airflow/logs
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: airflow-dags-pvc
+      - name: logs
+        persistentVolumeClaim:
+          claimName: airflow-logs-pvc

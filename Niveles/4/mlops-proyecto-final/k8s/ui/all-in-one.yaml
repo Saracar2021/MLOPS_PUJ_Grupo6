@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: streamlit
+  namespace: mlops-proyecto-final
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: streamlit
+  template:
+    metadata:
+      labels:
+        app: streamlit
+    spec:
+      containers:
+      - name: streamlit
+        image: saracardenas2025/mlops-ui:latest
+        imagePullPolicy: Always
+        env:
+        - name: FASTAPI_URL
+          value: "http://fastapi:8000"
+        - name: MLFLOW_URL
+          value: "http://mlflow:5000"
+        ports:
+        - containerPort: 8501
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: streamlit
+  namespace: mlops-proyecto-final
+spec:
+  selector:
+    app: streamlit
+  ports:
+  - port: 8501
+    targetPort: 8501
+    nodePort: 30851
+  type: NodePort
