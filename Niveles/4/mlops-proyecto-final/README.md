@@ -1,5 +1,6 @@
 # MLOps Proyecto Final - Predicción de Precios de Propiedades
 **Grupo 9 - Pontificia Universidad Javeriana**
+**Sara Juliana Cárdenas Bohórquez**
 
 Sistema completo de MLOps para predicción de precios de propiedades en USA, con reentrenamiento inteligente basado en drift detection, CI/CD automatizado y observabilidad.
 
@@ -32,6 +33,16 @@ GitHub Actions (CI/CD) → DockerHub → Kubernetes
 **Sampling**: Petición #1: 145k registros (baseline), Peticiones #2-5: 10k cada una  
 **Total procesado**: ~185k registros
 
+Como prueba inicial de la API, extraje los datos para familiarizarme y evaluar la cantidad de datos por petición: 
+
+De estas petición, se realizaron obtuve un archivo en formato json con las variables y
+
+![Prueba inicial de la API](image.png)
+
+Dado que los datos venían en un formato .json cree una función para convertirlos en .csv y confirmar que los podia procesar correctamente
+
+![datos en formato csv](image-2.png)
+
 ---
 
 ## 🛠️ Componentes
@@ -41,12 +52,61 @@ GitHub Actions (CI/CD) → DockerHub → Kubernetes
 
 ### Airflow (4 DAGs)
 
+Evidencia
+![Airflow (4 DAGs)](image-3.png)
 ### Airflow (4 DAGs)
 
 1. **`data_ingestion`**: GET API → Sampling (145k primera, 10k resto) → PostgreSQL RAW
+
+Visualización
+![data ingestion task](image-4.png)
+
+Podemos ver que la tabla raw_data se inicializa
+![alt text](image-5.png)
+
+Podemos ver que se ha hecho la 1ra petición a la API
+![alt text](image-6.png)
+
+Se consumen los datos, el la primera petición se reciben 230366 registros
+![alt text](image-7.png)
+
+Se hace un sampling y selecciono 145000 datos, esto debido a una restriccion de infraestructura (nota: cuando intento entrenar con más datos el sistem se cae y tengo que reiniciar, así que limito los registros para mantener los servicios arriba)
+![alt text](image-8.png)
+
+Se almacenan los datos en raw_data para continuar con el proceso
+![alt text](image-9.png)
+
 2. **`data_processing`**: RAW → Limpieza + Encoding → CLEAN
+
+Visualización
+![alt text](image-10.png)
+
+clean_data se inicializa
+![alt text](image-11.png)
+
+Se evalua cada batch para confirmar si ya se proceso, o si aún no, en este caso se procesa la petición #1
+![alt text](image-12.png)
+
+Se hace la limpieza de datos y se elimina el % de datos correspondiente
+![alt text](image-13.png)
+
+Se guardan los datos en clean_data
+![alt text](image-14.png)
+
+Se realiza el encoding de las variables independientes
+![alt text](image-15.png)
+
+Se marca como procesado el batch de datos
+![alt text](image-16.png)
+
+
 3. **`model_training`**: Drift detection (KS test) → Train 3 modelos → MLflow
+
+
 4. **`model_promotion`**: Mejor RMSE → Production stage
+
+
+
 
 **Criterio de reentrenamiento**: `len(new_data) >= 10000 AND (drift_detected OR first_request)`
 
