@@ -330,4 +330,5 @@ with DAG(
         python_callable=mark_as_processed,
     )
     
-    init_clean_db >> fetch_raw >> clean >> encode >> store_clean >> mark_processed
+    #init_clean_db >> fetch_raw >> clean >> encode >> store_clean >> mark_processed
+    init_clean_db >> fetch_raw >> clean >> store_clean >> encode >> mark_processed
