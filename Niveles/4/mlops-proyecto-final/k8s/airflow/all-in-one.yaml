@@ -133,7 +133,7 @@ spec:
       initContainers:
       - name: copy-dags
         image: saracardenas2025/mlops-airflow:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command:
         - /bin/bash
         - -c
@@ -147,7 +147,7 @@ spec:
           mountPath: /opt/airflow/dags
       - name: init-airflow
         image: saracardenas2025/mlops-airflow:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command:
         - /bin/bash
         - -c
@@ -163,7 +163,7 @@ spec:
       containers:
       - name: airflow-webserver
         image: saracardenas2025/mlops-airflow:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command:
         - airflow
         - webserver
@@ -224,7 +224,7 @@ spec:
       initContainers:
       - name: copy-dags
         image: saracardenas2025/mlops-airflow:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command:
         - /bin/bash
         - -c
@@ -239,7 +239,7 @@ spec:
       containers:
       - name: airflow-scheduler
         image: saracardenas2025/mlops-airflow:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command:
         - airflow
         - scheduler
