@@ -66,5 +66,5 @@ spec:
   ports:
   - port: 9090
     targetPort: 9090
-    nodePort: 30909
+    nodePort: 30908
   type: NodePort

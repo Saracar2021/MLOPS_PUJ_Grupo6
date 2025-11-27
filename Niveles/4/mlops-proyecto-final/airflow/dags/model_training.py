@@ -1,145 +1,151 @@
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
-import pandas as pd
+from airflow.operators.empty import EmptyOperator
 import psycopg2
+import pandas as pd
 import os
-import logging
 import mlflow
 import mlflow.sklearn
-import mlflow.xgboost
+from mlflow.tracking import MlflowClient
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from scipy.stats import ks_2samp
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error
+from sklearn.preprocessing import LabelEncoder
+from scipy import stats
 import numpy as np
 
-logger = logging.getLogger(__name__)
-
 default_args = {
-    'owner': 'grupo9',
+    'owner': 'mlops_grupo6',
     'depends_on_past': False,
-    'start_date': datetime(2025, 11, 25),
+    'start_date': datetime(2025, 11, 9),
     'email_on_failure': False,
     'email_on_retry': False,
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
 
-MLFLOW_URI = os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000')
 EXPERIMENT_NAME = "real_estate_prediction"
+MODEL_NAME = "real_estate_model"
+MIN_RECORDS_FOR_TRAINING = 10000
+DRIFT_THRESHOLD = 0.05
 
-def get_clean_connection():
-    return psycopg2.connect(
+def check_drift_and_decide(**context):
+    """Check if retraining is needed based on drift detection"""
+    mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000'))
+    client = MlflowClient()
+    
+    # Check if this is first training (no experiment exists)
+    try:
+        experiment = client.get_experiment_by_name(EXPERIMENT_NAME)
+        if experiment is None:
+            print("🆕 PRIMERA EJECUCIÓN: Entrenar modelo baseline")
+            return 'train_models'
+        
+        # Check if there are any successful runs
+        runs = client.search_runs(
+            experiment_ids=[experiment.experiment_id],
+            filter_string="status = 'FINISHED'",
+            max_results=1
+        )
+        
+        if not runs:
+            print("🆕 NO HAY MODELOS PREVIOS: Entrenar modelo baseline")
+            return 'train_models'
+            
+    except Exception as e:
+        print(f"🆕 EXPERIMENTO NO EXISTE: Entrenar modelo baseline - {str(e)}")
+        return 'train_models'
+    
+    # If we get here, there are previous models - check drift
+    conn = psycopg2.connect(
         host=os.getenv('POSTGRES_HOST', 'postgres'),
         port=os.getenv('POSTGRES_PORT', '5432'),
-        database='clean_data',
+        database=os.getenv('POSTGRES_CLEAN_DB', 'clean_data'),
         user=os.getenv('POSTGRES_USER', 'mlops_user'),
         password=os.getenv('POSTGRES_PASSWORD', 'mlops_password')
     )
-
-def setup_mlflow():
-    """Configurar MLflow"""
-    mlflow.set_tracking_uri(MLFLOW_URI)
-    try:
-        mlflow.create_experiment(EXPERIMENT_NAME)
-    except:
-        pass
-    mlflow.set_experiment(EXPERIMENT_NAME)
-    logger.info(f"✅ MLflow configurado: {MLFLOW_URI}")
-
-def should_retrain(**context):
-    """Decidir si entrenar basado en drift y cantidad"""
-    conn = get_clean_connection()
     
-    # Obtener datos baseline (primera petición)
-    df_baseline = pd.read_sql_query(
-        "SELECT * FROM clean_data WHERE request_number = 1",
-        conn
-    )
-    
-    # Obtener datos nuevos
-    df_new = pd.read_sql_query(
-        """SELECT * FROM clean_data 
-           WHERE request_number = (SELECT MAX(request_number) FROM clean_data)""",
-        conn
-    )
-    
+    # Get all data
+    df = pd.read_sql("SELECT * FROM clean_data WHERE encoded = TRUE", conn)
     conn.close()
     
-    # Criterio 1: Cantidad mínima
-    if len(df_new) < 10000:
-        reason = f"Insuficientes datos ({len(df_new)} < 10,000)"
-        logger.info(f"⏭️ SKIP ENTRENAMIENTO: {reason}")
-        context['task_instance'].xcom_push(key='retrain_reason', value=reason)
+    total_records = len(df)
+    print(f"📊 Total records: {total_records}")
+    
+    if total_records < MIN_RECORDS_FOR_TRAINING:
+        print(f"⏭️ SKIP ENTRENAMIENTO: Insuficientes datos ({total_records} < {MIN_RECORDS_FOR_TRAINING})")
         return 'end_without_training'
     
-    # Criterio 2: Drift detection
-    numeric_features = ['price', 'house_size', 'bed', 'bath']
+    # Check drift on key features
+    drift_features = ['price', 'house_size', 'bed', 'bath']
     drift_detected = False
-    drift_feature = None
-    drift_pvalue = None
     
-    for feature in numeric_features:
-        stat, p_value = ks_2samp(df_baseline[feature], df_new[feature])
-        
-        if p_value < 0.05:
-            drift_detected = True
-            drift_feature = feature
-            drift_pvalue = p_value
-            break
+    # Split into old and new data (last 20% as new)
+    split_idx = int(len(df) * 0.8)
+    old_data = df.iloc[:split_idx]
+    new_data = df.iloc[split_idx:]
+    
+    for feature in drift_features:
+        if feature in df.columns:
+            ks_stat, p_value = stats.ks_2samp(old_data[feature], new_data[feature])
+            print(f"🔍 Drift test {feature}: KS={ks_stat:.4f}, p-value={p_value:.4f}")
+            
+            if p_value < DRIFT_THRESHOLD:
+                print(f"⚠️ DRIFT DETECTADO en {feature}")
+                drift_detected = True
     
     if drift_detected:
-        reason = f"DRIFT en '{drift_feature}' (p-value={drift_pvalue:.4f})"
-        logger.info(f"✅ REENTRENAMIENTO JUSTIFICADO: {reason}")
-        context['task_instance'].xcom_push(key='retrain_reason', value=reason)
-        return 'load_training_data'
+        print("✅ ENTRENAR: Drift detectado")
+        return 'train_models'
     else:
-        reason = "No drift significativo detectado"
-        logger.info(f"⏭️ SKIP ENTRENAMIENTO: {reason}")
-        context['task_instance'].xcom_push(key='retrain_reason', value=reason)
+        print("⏭️ SKIP: No drift detectado")
         return 'end_without_training'
 
-def load_training_data(**context):
-    """Cargar todos los datos para entrenamiento"""
-    conn = get_clean_connection()
-    df = pd.read_sql_query("SELECT * FROM clean_data", conn)
+def train_models(**context):
+    """Train multiple regression models and log to MLflow"""
+    mlflow.set_tracking_uri(os.getenv('MLFLOW_TRACKING_URI', 'http://mlflow:5000'))
+    mlflow.set_experiment(EXPERIMENT_NAME)
+    
+    # Load data
+    conn = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432'),
+        database=os.getenv('POSTGRES_CLEAN_DB', 'clean_data'),
+        user=os.getenv('POSTGRES_USER', 'mlops_user'),
+        password=os.getenv('POSTGRES_PASSWORD', 'mlops_password')
+    )
+    
+    df = pd.read_sql("SELECT * FROM clean_data WHERE encoded = TRUE", conn)
     conn.close()
     
-    logger.info(f"📊 Datos cargados: {len(df)} registros")
+    print(f"📊 Loaded {len(df)} records")
     
-    # Separar features y target
-    target = 'price'
-    features = [col for col in df.columns if col not in ['id', 'request_number', 'processed_at', target]]
+    # Prepare features
+    # Encode categorical variables
+    label_encoders = {}
+    categorical_cols = ['brokered_by', 'status', 'city', 'state', 'zip_code']
     
-    X = df[features]
-    y = df[target]
+    for col in categorical_cols:
+        if col in df.columns:
+            le = LabelEncoder()
+            df[col] = le.fit_transform(df[col].astype(str))
+            label_encoders[col] = le
     
-    # Split train/val/test
+    # Select features and target
+    feature_cols = ['bed', 'bath', 'acre_lot', 'house_size', 'brokered_by', 'status', 'city', 'state', 'zip_code']
+    X = df[feature_cols]
+    y = df['price']
+    
+    # Split data
     X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.3, random_state=42)
     X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
     
-    logger.info(f"   Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
+    print(f"📊 Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
     
-    context['task_instance'].xcom_push(key='X_train', value=X_train.to_dict('records'))
-    context['task_instance'].xcom_push(key='y_train', value=y_train.tolist())
-    context['task_instance'].xcom_push(key='X_val', value=X_val.to_dict('records'))
-    context['task_instance'].xcom_push(key='y_val', value=y_val.tolist())
-    context['task_instance'].xcom_push(key='feature_names', value=features)
-
-def train_models(**context):
-    """Entrenar 3 modelos y registrar en MLflow"""
-    setup_mlflow()
-    
-    # Cargar datos
-    X_train = pd.DataFrame(context['task_instance'].xcom_pull(key='X_train'))
-    y_train = np.array(context['task_instance'].xcom_pull(key='y_train'))
-    X_val = pd.DataFrame(context['task_instance'].xcom_pull(key='X_val'))
-    y_val = np.array(context['task_instance'].xcom_pull(key='y_val'))
-    
-    # Modelos a entrenar
+    # Train models
     models = {
         'Ridge': Ridge(alpha=1.0),
         'RandomForest': RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1),
@@ -149,68 +155,57 @@ def train_models(**context):
     best_model_name = None
     best_rmse = float('inf')
     
-    for name, model in models.items():
-        logger.info(f"🤖 Entrenando {name}...")
-        
-        with mlflow.start_run(run_name=name):
-            # Entrenar
+    for model_name, model in models.items():
+        with mlflow.start_run(run_name=f"{model_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+            print(f"🤖 Training {model_name}...")
+            
+            # Train
             model.fit(X_train, y_train)
             
-            # Predecir
+            # Predict
             y_pred = model.predict(X_val)
             
-            # Métricas
+            # Metrics
             rmse = np.sqrt(mean_squared_error(y_val, y_pred))
             mae = mean_absolute_error(y_val, y_pred)
             r2 = r2_score(y_val, y_pred)
-            mape = np.mean(np.abs((y_val - y_pred) / y_val)) * 100
+            mape = mean_absolute_percentage_error(y_val, y_pred)
             
-            # Log en MLflow
-            mlflow.log_param("model_type", name)
+            print(f"📈 {model_name} - RMSE: {rmse:.2f}, MAE: {mae:.2f}, R²: {r2:.4f}, MAPE: {mape:.4f}")
+            
+            # Log to MLflow
+            mlflow.log_param("model_type", model_name)
+            mlflow.log_param("n_train", len(X_train))
+            mlflow.log_param("n_val", len(X_val))
+            
             mlflow.log_metric("rmse", rmse)
             mlflow.log_metric("mae", mae)
-            mlflow.log_metric("r2_score", r2)
+            mlflow.log_metric("r2", r2)
             mlflow.log_metric("mape", mape)
             
-            # Registrar modelo
-            if name == 'XGBoost':
-                mlflow.xgboost.log_model(model, "model")
-            else:
-                mlflow.sklearn.log_model(model, "model")
+            # Log model
+            mlflow.sklearn.log_model(model, "model")
             
-            logger.info(f"   {name}: RMSE={rmse:.2f} | MAE={mae:.2f} | R²={r2:.3f}")
-            
-            # Trackear mejor modelo
+            # Track best model
             if rmse < best_rmse:
                 best_rmse = rmse
-                best_model_name = name
+                best_model_name = model_name
     
-    logger.info(f"✅ Mejor modelo: {best_model_name} (RMSE={best_rmse:.2f})")
+    print(f"🏆 Best model: {best_model_name} with RMSE: {best_rmse:.2f}")
     context['task_instance'].xcom_push(key='best_model', value=best_model_name)
     context['task_instance'].xcom_push(key='best_rmse', value=best_rmse)
-
-def end_without_training(**context):
-    """Finalizar sin entrenar"""
-    reason = context['task_instance'].xcom_pull(key='retrain_reason')
-    logger.info(f"⏭️ Pipeline finalizado sin entrenamiento: {reason}")
 
 with DAG(
     'model_training',
     default_args=default_args,
-    description='Entrenamiento de modelos con drift detection',
-    schedule_interval=None,
+    description='Train models with drift detection',
+    schedule_interval='@daily',
     catchup=False,
-    tags=['training', 'grupo9']
 ) as dag:
     
-    decide = BranchPythonOperator(
-        task_id='should_retrain',
-        python_callable=should_retrain,
-    )
-    
-    load_data = PythonOperator(
-        task_id='load_training_data',
-        python_callable=load_training_data,
+    check_drift = BranchPythonOperator(
+        task_id='check_drift_and_decide',
+        python_callable=check_drift_and_decide,
     )
     
     train = PythonOperator(
@@ -218,10 +213,15 @@ with DAG(
         python_callable=train_models,
     )
     
-    end_skip = PythonOperator(
-        task_id='end_without_training',
-        python_callable=end_without_training,
+    end_without = EmptyOperator(
+        task_id='end_without_training'
     )
     
-    decide >> [load_data, end_skip]
-    load_data >> train
+    end_with = EmptyOperator(
+        task_id='end_with_training',
+        trigger_rule='none_failed_min_one_success'
+    )
+    
+    check_drift >> [train, end_without]
+    train >> end_with
+    end_without >> end_with

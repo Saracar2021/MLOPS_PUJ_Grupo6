@@ -15,11 +15,12 @@ spec:
     spec:
       containers:
       - name: mlflow
-        image: ghcr.io/mlflow/mlflow:v2.8.0
+        image: python:3.9-slim
         command:
         - /bin/bash
         - -c
         - |
+          pip install mlflow==2.8.0 psycopg2-binary boto3 && \
           mlflow server \
             --backend-store-uri postgresql://mlops_user:mlops_password@postgres:5432/mlflow_metadata \
             --default-artifact-root s3://mlflow/ \
@@ -36,11 +37,11 @@ spec:
         - containerPort: 5000
         resources:
           requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
             memory: "512Mi"
             cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
 ---
 apiVersion: v1
 kind: Service
@@ -53,5 +54,5 @@ spec:
   ports:
   - port: 5000
     targetPort: 5000
-    nodePort: 30500
+    nodePort: 30501
   type: NodePort

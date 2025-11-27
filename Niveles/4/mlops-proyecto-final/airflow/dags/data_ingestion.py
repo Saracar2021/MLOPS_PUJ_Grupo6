@@ -24,7 +24,7 @@ default_args = {
 # Configuración
 API_BASE = "http://10.43.100.103:8000"
 GROUP_NUMBER = 9
-DAY = "Tuesday"
+DAY = "Wednesday"
 BASELINE_SAMPLE = 145000  # Primera petición: completa
 INCREMENTAL_SAMPLE = 10000  # Peticiones siguientes: sample
 

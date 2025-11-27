@@ -40,207 +40,256 @@ def get_clean_connection():
     )
 
 def init_clean_database(**context):
-    """Crear tabla CLEAN si no existe"""
-    conn = get_clean_connection()
+    """Initialize clean data database"""
+    conn = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432'),
+        database=os.getenv('POSTGRES_CLEAN_DB', 'clean_data'),
+        user=os.getenv('POSTGRES_USER', 'mlops_user'),
+        password=os.getenv('POSTGRES_PASSWORD', 'mlops_password')
+    )
     cur = conn.cursor()
     
     cur.execute("""
         CREATE TABLE IF NOT EXISTS clean_data (
             id SERIAL PRIMARY KEY,
-            request_number INT NOT NULL,
-            brokered_by VARCHAR(50),
-            status VARCHAR(20),
+            request_number INTEGER,
+            brokered_by TEXT,
+            status TEXT,
             price FLOAT,
-            bed INT,
+            bed INTEGER,
             bath FLOAT,
             acre_lot FLOAT,
-            city VARCHAR(100),
-            state VARCHAR(50),
-            zip_code VARCHAR(10),
+            city TEXT,
+            state TEXT,
+            zip_code TEXT,
             house_size FLOAT,
-            processed_at TIMESTAMP DEFAULT NOW()
+            prev_sold_date TEXT,
+            processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            encoded BOOLEAN DEFAULT FALSE
         )
     """)
     
     conn.commit()
     cur.close()
     conn.close()
-    logger.info("✅ Tabla clean_data inicializada")
+    print("Clean database initialized")
 
 def fetch_unprocessed_raw(**context):
-    """Obtener datos RAW no procesados"""
-    conn = get_raw_connection()
-    cur = conn.cursor()
+    """Fetch raw data that hasn't been processed yet"""
     
-    cur.execute("""
-        SELECT id, request_number, data 
-        FROM raw_data 
-        WHERE used_in_training = FALSE
-        ORDER BY request_number
-    """)
+    # Connect to clean_data to get processed request_numbers
+    conn_clean = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432'),
+        database=os.getenv('POSTGRES_CLEAN_DB', 'clean_data'),
+        user=os.getenv('POSTGRES_USER', 'mlops_user'),
+        password=os.getenv('POSTGRES_PASSWORD', 'mlops_password')
+    )
+    cur_clean = conn_clean.cursor()
     
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
+    # Get already processed request_numbers
+    cur_clean.execute("SELECT DISTINCT request_number FROM clean_data")
+    processed_requests = set(row[0] for row in cur_clean.fetchall())
+    cur_clean.close()
+    conn_clean.close()
     
-    if not rows:
-        logger.warning("⚠️ No hay datos nuevos para procesar")
-        return None
+    print(f"📊 Request numbers ya procesados: {processed_requests}")
     
-    # Convertir a DataFrame
-    records = []
-    request_numbers = []
-    raw_ids = []
+    # Connect to raw_data
+    conn_raw = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432'),
+        database=os.getenv('POSTGRES_RAW_DB', 'raw_data'),
+        user=os.getenv('POSTGRES_USER', 'mlops_user'),
+        password=os.getenv('POSTGRES_PASSWORD', 'mlops_password')
+    )
+    cur_raw = conn_raw.cursor()
     
-    for row_id, req_num, data_json in rows:
-        records.append(data_json)
-        request_numbers.append(req_num)
-        raw_ids.append(row_id)
+    # Get available request_numbers
+    cur_raw.execute("SELECT DISTINCT request_number FROM raw_data ORDER BY request_number")
+    all_requests = [row[0] for row in cur_raw.fetchall()]
     
-    df = pd.DataFrame(records)
-    logger.info(f"📊 Obtenidos {len(df)} registros sin procesar")
-    logger.info(f"   Peticiones: {set(request_numbers)}")
+    print(f"📊 Request numbers disponibles: {all_requests}")
     
-    context['task_instance'].xcom_push(key='raw_df', value=df.to_dict('records'))
-    context['task_instance'].xcom_push(key='request_numbers', value=request_numbers)
-    context['task_instance'].xcom_push(key='raw_ids', value=raw_ids)
+    # Find unprocessed requests
+    unprocessed_requests = [r for r in all_requests if r not in processed_requests]
     
-    return len(df)
+    if not unprocessed_requests:
+        print("⚠️ No hay datos nuevos para procesar")
+        cur_raw.close()
+        conn_raw.close()
+        return 0
+    
+    # Get next unprocessed request
+    next_request = unprocessed_requests[0]
+    print(f"✅ Procesando request_number: {next_request}")
+    
+    # Fetch data for that request
+    cur_raw.execute("""
+        SELECT id, data, request_number
+        FROM raw_data
+        WHERE request_number = %s
+    """, (next_request,))
+    
+    rows = cur_raw.fetchall()
+    cur_raw.close()
+    conn_raw.close()
+    
+    total_records = len(rows)
+    print(f"📊 Obtenidos {total_records} registros sin procesar")
+    print(f"   Peticiones: {{{next_request}}}")
+    
+    # Push to XCom
+    context['task_instance'].xcom_push(key='raw_data', value=rows)
+    context['task_instance'].xcom_push(key='request_number', value=next_request)
+    
+    return total_records
 
 def clean_data(**context):
-    """Limpieza de datos: outliers, tipos, valores nulos"""
-    raw_data = context['task_instance'].xcom_pull(key='raw_df')
-    df = pd.DataFrame(raw_data)
+    """Clean and filter raw data"""
+    raw_data_list = context['task_instance'].xcom_pull(task_ids='fetch_unprocessed_raw', key='raw_data')
+    request_number = context['task_instance'].xcom_pull(task_ids='fetch_unprocessed_raw', key='request_number')
     
-    initial_count = len(df)
-    logger.info(f"🧹 Iniciando limpieza de {initial_count} registros")
+    if not raw_data_list:
+        print("No data to clean")
+        return
     
-    # 1. Filtrar outliers en price
-    df = df[(df['price'] >= 50000) & (df['price'] <= 2000000)]
-    logger.info(f"   Price outliers eliminados: {initial_count - len(df)}")
+    # Convert to DataFrame - handle both string and dict
+    records = []
+    for record in raw_data_list:
+        data = record[1]
+        # If already a dict, use it; if string, parse it
+        if isinstance(data, dict):
+            records.append(data)
+        else:
+            records.append(json.loads(data))
     
-    # 2. Filtrar outliers en house_size
-    df = df[(df['house_size'] >= 500) & (df['house_size'] <= 10000)]
-    logger.info(f"   House_size outliers eliminados: {initial_count - len(df)}")
+    df = pd.DataFrame(records)
+    original_count = len(df)
+    print(f"📊 Datos originales: {original_count} registros")
     
-    # 3. Convertir tipos correctamente
-    df['brokered_by'] = df['brokered_by'].astype(int).astype(str)
-    df['zip_code'] = df['zip_code'].astype(int).astype(str)
-    df['bed'] = df['bed'].astype(int)
+    # Remove outliers
+    df = df[
+        (df['price'] >= 50000) & (df['price'] <= 2000000) &
+        (df['house_size'] >= 500) & (df['house_size'] <= 10000)
+    ]
     
-    # 4. Eliminar columna street (alta cardinalidad, no útil)
+    # Convert types
+    df['brokered_by'] = df['brokered_by'].astype(str)
+    df['zip_code'] = df['zip_code'].astype(str)
+    
+    # Drop street column
     if 'street' in df.columns:
-        df = df.drop('street', axis=1)
-        logger.info("   Columna 'street' eliminada")
+        df = df.drop(columns=['street'])
     
-    # 5. Encoding de status (binario)
-    le = LabelEncoder()
-    df['status_encoded'] = le.fit_transform(df['status'])
-    logger.info(f"   Status encoding: {dict(zip(le.classes_, le.transform(le.classes_)))}")
+    cleaned_count = len(df)
+    removed = original_count - cleaned_count
+    removed_pct = (removed / original_count * 100) if original_count > 0 else 0
     
-    final_count = len(df)
-    logger.info(f"✅ Limpieza completada: {initial_count} → {final_count} registros")
-    logger.info(f"   Eliminados: {initial_count - final_count} ({(initial_count - final_count)/initial_count*100:.1f}%)")
+    print(f"✅ Limpieza completada: {original_count} → {cleaned_count} registros")
+    print(f"   Eliminados: {removed} ({removed_pct:.1f}%)")
     
-    context['task_instance'].xcom_push(key='clean_df', value=df.to_dict('records'))
+    # Push cleaned data to XCom
+    context['task_instance'].xcom_push(key='cleaned_df', value=df.to_json(orient='records'))
+    context['task_instance'].xcom_push(key='request_number', value=request_number)
+    
+    return cleaned_count
 
 def encode_features(**context):
-    """Encoding de features categóricas"""
-    clean_data = context['task_instance'].xcom_pull(key='clean_df')
-    df = pd.DataFrame(clean_data)
-    
-    logger.info(f"🔢 Encoding de features categóricas")
-    
-    # Target Encoding para alta cardinalidad (city, brokered_by, zip_code)
-    # Nota: En producción se usaría category_encoders, aquí simplificamos con mean encoding
-    for col in ['city', 'brokered_by', 'zip_code']:
-        if col in df.columns:
-            target_mean = df.groupby(col)['price'].mean()
-            df[f'{col}_encoded'] = df[col].map(target_mean)
-            logger.info(f"   {col}: Target encoding aplicado ({len(target_mean)} categorías)")
-    
-    # One-Hot Encoding para baja cardinalidad (state)
-    if 'state' in df.columns:
-        state_dummies = pd.get_dummies(df['state'], prefix='state')
-        df = pd.concat([df, state_dummies], axis=1)
-        logger.info(f"   state: One-Hot encoding aplicado ({len(state_dummies.columns)} columnas)")
-    
-    initial_cols = context['task_instance'].xcom_pull(key='clean_df')
-    initial_cols_count = len(pd.DataFrame(initial_cols).columns)
-    final_cols = len(df.columns)
-    
-    logger.info(f"✅ Encoding completado: {initial_cols_count} → {final_cols} columnas")
-    
-    context['task_instance'].xcom_push(key='encoded_df', value=df.to_dict('records'))
+    """Mark data as ready for encoding (actual encoding happens during training)"""
+    request_number = context['task_instance'].xcom_pull(task_ids='clean_data', key='request_number')
+
+    if request_number is None:
+        print("⚠️ No request_number found, skipping")
+        return
+
+    conn = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432'),
+        database=os.getenv('POSTGRES_CLEAN_DB', 'clean_data'),
+        user=os.getenv('POSTGRES_USER', 'mlops_user'),
+        password=os.getenv('POSTGRES_PASSWORD', 'mlops_password')
+    )
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE clean_data
+        SET encoded = TRUE
+        WHERE request_number = %s
+    """, (request_number,))
+
+    rows_updated = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    print(f"✅ Marked {rows_updated} records as encoded for request {request_number}")
 
 def store_clean_data(**context):
-    """Guardar datos procesados en CLEAN database"""
-    encoded_data = context['task_instance'].xcom_pull(key='encoded_df')
-    request_numbers = context['task_instance'].xcom_pull(key='request_numbers')
-    
-    df = pd.DataFrame(encoded_data)
-    
-    # Seleccionar solo columnas originales para CLEAN table
-    base_columns = ['brokered_by', 'status', 'price', 'bed', 'bath', 'acre_lot', 
-                    'city', 'state', 'zip_code', 'house_size']
-    df_to_store = df[base_columns].copy()
-    df_to_store['request_number'] = request_numbers[:len(df)]
-    
-    conn = get_clean_connection()
+    """Store cleaned data in database"""
+    df_json = context['task_instance'].xcom_pull(task_ids='clean_data', key='cleaned_df')
+    request_number = context['task_instance'].xcom_pull(task_ids='clean_data', key='request_number')
+
+    if df_json is None:
+        print("No data to store")
+        return
+
+    df = pd.read_json(df_json, orient='records')
+
+    conn = psycopg2.connect(
+        host=os.getenv('POSTGRES_HOST', 'postgres'),
+        port=os.getenv('POSTGRES_PORT', '5432'),
+        database=os.getenv('POSTGRES_CLEAN_DB', 'clean_data'),
+        user=os.getenv('POSTGRES_USER', 'mlops_user'),
+        password=os.getenv('POSTGRES_PASSWORD', 'mlops_password')
+    )
     cur = conn.cursor()
-    
-    # Preparar valores
-    values = []
-    for _, row in df_to_store.iterrows():
-        values.append((
-            row['request_number'],
-            row['brokered_by'],
-            row['status'],
-            row['price'],
-            row['bed'],
-            row['bath'],
-            row['acre_lot'],
-            row['city'],
-            row['state'],
-            row['zip_code'],
-            row['house_size']
+
+    # Prepare data for insertion
+    from psycopg2.extras import execute_values
+    records = []
+    for _, row in df.iterrows():
+        records.append((
+            request_number,
+            str(row.get('brokered_by', '')),
+            str(row.get('status', '')),
+            float(row.get('price', 0)),
+            int(row.get('bed', 0)),
+            float(row.get('bath', 0)),
+            float(row.get('acre_lot', 0)),
+            str(row.get('city', '')),
+            str(row.get('state', '')),
+            str(row.get('zip_code', '')),
+            float(row.get('house_size', 0)),
+            str(row.get('prev_sold_date', ''))
         ))
-    
+
+    # Insert data
     execute_values(
         cur,
-        """
-        INSERT INTO clean_data 
-        (request_number, brokered_by, status, price, bed, bath, acre_lot, 
-         city, state, zip_code, house_size)
-        VALUES %s
-        """,
-        values
+        """INSERT INTO clean_data
+           (request_number, brokered_by, status, price, bed, bath, acre_lot,
+            city, state, zip_code, house_size, prev_sold_date)
+           VALUES %s""",
+        records
     )
-    
+
     conn.commit()
     cur.close()
     conn.close()
-    
-    logger.info(f"💾 Almacenados {len(df_to_store)} registros en clean_data")
+
+    print(f"✅ Stored {len(records)} records for request {request_number}")
 
 def mark_as_processed(**context):
-    """Marcar registros RAW como procesados"""
-    raw_ids = context['task_instance'].xcom_pull(key='raw_ids')
+    """Mark raw data as processed (optional - we use request_number logic)"""
+    request_number = context['task_instance'].xcom_pull(task_ids='store_clean_data', key='request_number')
     
-    conn = get_raw_connection()
-    cur = conn.cursor()
+    if request_number is None:
+        request_number = context['task_instance'].xcom_pull(task_ids='fetch_unprocessed_raw', key='request_number')
     
-    cur.execute("""
-        UPDATE raw_data 
-        SET used_in_training = TRUE 
-        WHERE id = ANY(%s)
-    """, (raw_ids,))
-    
-    conn.commit()
-    cur.close()
-    conn.close()
-    
-    logger.info(f"✅ Marcados {len(raw_ids)} registros como procesados")
+    print(f"✅ Request {request_number} procesado exitosamente")
+    print("   (Tracking basado en request_number, no en flags)")
 
 with DAG(
     'data_processing',
