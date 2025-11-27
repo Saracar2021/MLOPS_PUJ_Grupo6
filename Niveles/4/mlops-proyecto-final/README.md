@@ -81,7 +81,23 @@ Se almacenan los datos en raw_data para continuar con el proceso
 Visualización
 ![alt text](image-10.png)
 
+clean_data se inicializa
+![alt text](image-11.png)
 
+Se evalua cada batch para confirmar si ya se proceso, o si aún no, en este caso se procesa la petición #1
+![alt text](image-12.png)
+
+Se hace la limpieza de datos y se elimina el % de datos correspondiente
+![alt text](image-13.png)
+
+Se guardan los datos en clean_data
+![alt text](image-14.png)
+
+Se realiza el encoding de las variables independientes
+![alt text](image-15.png)
+
+Se marca como procesado el batch de datos
+![alt text](image-16.png)
 
 
 3. **`model_training`**: Drift detection (KS test) → Train 3 modelos → MLflow
