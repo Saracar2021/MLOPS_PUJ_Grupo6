@@ -25,6 +25,16 @@ spec:
           value: ""
         ports:
         - containerPort: 3000
+        volumeMounts:
+        # 1. Volumen de persistencia (existente)
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        # 2. Configuración de Provisioning (NUEVO)
+        - name: provisioning-volume
+          mountPath: /etc/grafana/provisioning/dashboards
+        # 3. JSON del Dashboard (NUEVO)
+        - name: dashboards-volume
+          mountPath: /var/lib/grafana/dashboards
         resources:
           requests:
             memory: "512Mi"
@@ -32,6 +42,17 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
+      volumes:
+      # Definición de volúmenes
+      - name: grafana-storage
+        persistentVolumeClaim:
+          claimName: grafana-pvc
+      - name: provisioning-volume
+        configMap:
+          name: grafana-provisioning
+      - name: dashboards-volume
+        configMap:
+          name: grafana-dashboards-json
 ---
 apiVersion: v1
 kind: Service
