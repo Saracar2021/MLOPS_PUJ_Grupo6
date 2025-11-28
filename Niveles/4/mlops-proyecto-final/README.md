@@ -102,11 +102,20 @@ Se marca como procesado el batch de datos
 
 3. **`model_training`**: Drift detection (KS test) → Train 3 modelos → MLflow
 
+Visualización:
+![alt text](image-17.png)
+
+Verificación del drift 
+![alt text](image-18.png)
+
+Entrenamiento de los 3 modelos: Random Forest, XGBoost y Ridge
+![alt text](image-19.png)
 
 4. **`model_promotion`**: Mejor RMSE → Production stage
 
-
-
+Visualización
+Selecciona el mejor modelo y lo envía a producción
+![alt text](image-20.png)
 
 **Criterio de reentrenamiento**: `len(new_data) >= 10000 AND (drift_detected OR first_request)`
 
@@ -114,14 +123,34 @@ Se marca como procesado el batch de datos
 **Endpoints**: `/predict`, `/health`, `/reload_model`, `/metrics`  
 **Métricas Prometheus**: `predictions_total`, `prediction_latency_seconds`, `prediction_errors_total`, `model_rmse`
 
+![alt text](image-21.png)
+
 ### Streamlit UI
 **Páginas**: Predicción (formulario + resultado), Historial de modelos
+
+Predicción + modelo
+![alt text](image-22.png)
+
+Historial de modelos
+![alt text](image-23.png)
 
 ### MinIO + MLflow
 **Artifacts**: Modelos, métricas, logs → S3-compatible storage
 
+Modelos
+![alt text](image-24.png)
+
+Metricas
+![alt text](image-26.png)
+![alt text](image-25.png)
+
+MinIo
+![alt text](image-27.png)
+![alt text](image-28.png)
+
 ### Prometheus + Grafana
 **Métricas**: Request rate, latencia (p50/p95/p99), error rate, RMSE
+![alt text](image-29.png)
 
 ---
 
@@ -133,7 +162,7 @@ Se marca como procesado el batch de datos
 - kubectl
 - DockerHub account
 
-### 2. Setup Inicial
+### 2. Setup Inicial --> Completado
 ```bash
 git clone <tu-repo>
 cd mlops-proyecto-final
@@ -146,19 +175,15 @@ En GitHub: Settings → Secrets → New secret
 - `DOCKERHUB_USERNAME`: tu usuario
 - `DOCKERHUB_TOKEN`: token de acceso
 
+![alt text](image-30.png)
+
 ### 4. Actualizar manifiestos K8s
 **IMPORTANTE**: Reemplazar `YOUR_DOCKERHUB_USERNAME` con tu usuario en:
 - `k8s/airflow/all-in-one.yaml` (líneas 90, 101, 135)
 - `k8s/api/all-in-one.yaml` (línea 14)
 - `k8s/ui/all-in-one.yaml` (línea 14)
 
-```bash
-# Opción rápida (Linux/Mac):
-find k8s -name "*.yaml" -exec sed -i 's/YOUR_DOCKERHUB_USERNAME/tu-usuario/g' {} +
-
-# Windows (Git Bash):
-find k8s -name "*.yaml" -exec sed -i 's/YOUR_DOCKERHUB_USERNAME/tu-usuario/g' {} +
-```
+![alt text](image-31.png)
 
 ### 5. Build y Push de imágenes
 
@@ -185,40 +210,15 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
+
+
 ### 7. Acceder a servicios
 URLs se muestran al final del deployment. Alternativamente:
 ```bash
 minikube service list -n mlops-proyecto-final
-```
 
----
+![alt text](image-32.png)
 
-## 🔄 Flujo de Ejecución
-
-### Primera petición (Baseline)
-1. **Airflow UI** (admin/admin) → Trigger `data_ingestion`
-2. Log esperado: `"Petición #1 (BASELINE): 145,000 registros"`
-3. Trigger `data_processing` → Log: `"Limpieza: 145,000 → 142,340"`
-4. Trigger `model_training` → Log: `"✅ REENTRENAMIENTO: Cantidad >= 10,000"`
-5. Esperar ~4 min → Log: `"XGBoost RMSE: 76,543 ← MEJOR"`
-6. Trigger `model_promotion` → Log: `"XGBoost v1 → PRODUCTION"`
-
-### Peticiones 2-5 (Incremental)
-1. Trigger `data_ingestion` → Log: `"Petición #N: XXX,XXX → 10,000"`
-2. Trigger `data_processing`
-3. Trigger `model_training`:
-   - **Sin drift**: Log: `"⏭️ SKIP: No drift significativo"`
-   - **Con drift**: Entrenar + Log: `"✅ DRIFT en 'feature' (p=0.02)"`
-4. Si hubo training: Trigger `model_promotion`
-
-### Test de predicción
-```bash
-FASTAPI_URL=$(minikube service fastapi -n mlops-proyecto-final --url)
-curl -X POST "$FASTAPI_URL/predict" -H "Content-Type: application/json" -d '{
-  "brokered_by": "12345", "status": "for_sale", "bed": 3, "bath": 2.0,
-  "acre_lot": 0.5, "city": "Boston", "state": "Massachusetts",
-  "zip_code": "02101", "house_size": 1500
-}'
 ```
 
 ---
@@ -230,6 +230,7 @@ curl -X POST "$FASTAPI_URL/predict" -H "Content-Type: application/json" -d '{
 kubectl exec -it deployment/postgres -n mlops-proyecto-final -- \
   psql -U mlops_user -d raw_data -c "SELECT request_number, COUNT(*) FROM raw_data GROUP BY request_number;"
 ```
+![alt text](image-33.png)
 
 ### Ver modelos en MLflow
 ```bash
@@ -245,27 +246,6 @@ minikube service mlflow -n mlops-proyecto-final
 ### Ver logs de Airflow
 ```bash
 kubectl logs -f deployment/airflow-scheduler -n mlops-proyecto-final
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Pods no inician
-```bash
-kubectl get pods -n mlops-proyecto-final
-kubectl logs <pod-name> -n mlops-proyecto-final
-kubectl describe pod <pod-name> -n mlops-proyecto-final
-```
-
-### Imágenes no se construyen en GitHub Actions
-- Verificar GitHub Secrets configurados
-- Revisar Actions tab en GitHub para logs
-
-### API no conecta a MLflow
-```bash
-kubectl get pods -l app=mlflow -n mlops-proyecto-final
-kubectl exec -it deployment/fastapi -n mlops-proyecto-final -- env | grep MLFLOW
 ```
 
 ---
@@ -301,11 +281,3 @@ mlops-proyecto-final/
     ├── prometheus/
     └── grafana/
 ```
-
----
-
-## 📞 Contacto
-
-**Grupo 9** - Pontificia Universidad Javeriana  
-MLOps 2025-2 | Profesor: Cristian Javier Diaz Alvarez
-
